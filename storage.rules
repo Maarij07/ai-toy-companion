@@ -1,0 +1,23 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /users/{userId}/{file} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+    
+    match /toys/{toyId}/{file} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && resource.metadata.ownerId == request.auth.uid;
+    }
+    
+    match /marketplace/{itemId}/{file} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && resource.metadata.sellerId == request.auth.uid;
+    }
+    
+    match /{allPaths=**} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null;
+    }
+  }
+}
