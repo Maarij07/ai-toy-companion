@@ -5,14 +5,15 @@
  * @format
  */
 
-import { StatusBar, StyleSheet, useColorScheme, View } from 'react-native';
+import { StatusBar, StyleSheet, useColorScheme, View, ActivityIndicator, Text } from 'react-native';
 import {
   SafeAreaProvider,
 } from 'react-native-safe-area-context';
 import { useState, useEffect } from 'react';
 
-// Firebase initialization
+// Firebase initialization MUST be first
 import './src/config/firebase';
+import { getAuth } from './src/config/firebase';
 
 import SplashScreen from './src/components/SplashScreen';
 import LoginScreen from './src/components/LoginScreen';
@@ -26,15 +27,29 @@ import HomeScreen from './src/components/HomeScreen';
 function App() {
   const isDarkMode = useColorScheme() === 'dark';
   const [showSplash, setShowSplash] = useState(true);
+  const [isInitializing, setIsInitializing] = useState(true);
   const [currentScreen, setCurrentScreen] = useState<'login' | 'signup' | 'forgot' | 'onboarding' | 'setup' | 'home'>('login');
   
   useEffect(() => {
-    // Simulate splash screen completion
-    const timer = setTimeout(() => {
+    // Check if user is already logged in
+    const unsubscribe = getAuth().onAuthStateChanged(user => {
+      if (user) {
+        setCurrentScreen('home');
+      } else {
+        setCurrentScreen('login');
+      }
+      setIsInitializing(false);
+    });
+
+    // Show splash screen while initializing
+    const splashTimer = setTimeout(() => {
       setShowSplash(false);
-    }, 3000); // Show splash for 3 seconds
+    }, 3000);
     
-    return () => clearTimeout(timer);
+    return () => {
+      clearTimeout(splashTimer);
+      unsubscribe();
+    };
   }, []);
 
   const navigateToSignup = () => {
@@ -86,7 +101,16 @@ function App() {
   return (
     <SafeAreaProvider>
       <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
-      {showSplash ? <SplashScreen /> : renderCurrentScreen()}
+      {isInitializing ? (
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F8F4E9' }}>
+          <ActivityIndicator size="large" color="#6D8B74" />
+          <Text style={{ marginTop: 10, color: '#3C3C3C' }}>Initializing...</Text>
+        </View>
+      ) : showSplash ? (
+        <SplashScreen />
+      ) : (
+        renderCurrentScreen()
+      )}
     </SafeAreaProvider>
   );
 }

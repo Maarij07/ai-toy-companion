@@ -20,6 +20,12 @@ import TermsModal from './TermsModal';
 import PrivacyModal from './PrivacyModal';
 const colors = require('../config/colors');
 
+// Firebase imports
+import { getAuth, firestore } from '../config/firebase';
+import { setDoc, doc, getDoc } from '@react-native-firebase/firestore';
+import { GoogleSignin } from '@react-native-google-signin/google-signin';
+import authModule from '@react-native-firebase/auth';
+
 const SignupScreen = ({ onNavigateToLogin, onNavigateToOnboarding }: { onNavigateToLogin?: () => void; onNavigateToOnboarding?: () => void; }) => {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -72,7 +78,7 @@ const SignupScreen = ({ onNavigateToLogin, onNavigateToOnboarding }: { onNavigat
     });
   };
 
-  const handleSignup = () => {
+  const handleSignup = async () => {
     let newErrors = {
       name: '',
       email: '',
@@ -121,14 +127,108 @@ const SignupScreen = ({ onNavigateToLogin, onNavigateToOnboarding }: { onNavigat
 
     if (!hasError) {
       setIsLoading(true);
-      // Simulate API call to Firebase
-      setTimeout(() => {
-        setIsLoading(false);
-        // In a real app, navigate to onboarding screen after successful signup
+      
+      try {
+        // Create user with Firebase Authentication
+        const userCredential = await getAuth().createUserWithEmailAndPassword(email, password);
+        const user = userCredential.user;
+        
+        // Store additional user data in Firestore
+        await setDoc(doc(firestore, 'users', user.uid), {
+          name: name.trim(),
+          email: email.toLowerCase(),
+          createdAt: new Date(),
+          profileComplete: false,
+        });
+        
+        console.log('User created successfully:', user.uid);
+        
+        // Navigate to onboarding screen after successful signup
         if (onNavigateToOnboarding) {
           onNavigateToOnboarding();
         }
-      }, 1500);
+      } catch (error: any) {
+        console.error('Signup error:', error);
+        
+        // Map Firebase error codes to user-friendly messages
+        const errorMessages: { [key: string]: string } = {
+          'auth/email-already-in-use': 'This email is already registered. Please use a different email.',
+          'auth/weak-password': 'Password is not strong enough. Please use a stronger password.',
+          'auth/invalid-email': 'Please enter a valid email address.',
+          'auth/operation-not-allowed': 'Sign up is currently unavailable. Please try again later.',
+          'auth/network-request-failed': 'Network error. Please check your connection and try again.',
+        };
+        
+        const friendlyMessage = errorMessages[error.code] || 'Unable to create account. Please try again.';
+        Alert.alert('Sign Up Failed', friendlyMessage);
+      } finally {
+        setIsLoading(false);
+      }
+    }
+  };
+  
+  const handleGoogleSignup = async () => {
+    try {
+      setIsLoading(true);
+      
+      // Configure Google Sign-In
+      await GoogleSignin.configure({
+        webClientId: "708825188624-aba1l7jag9b5omnok4mhme8gft97sg7q.apps.googleusercontent.com", // Your actual Google Web Client ID from google-services.json
+      });
+      
+      // Check if Google Play Services is available
+      await GoogleSignin.hasPlayServices();
+      
+      // Sign in with Google
+      const response = await GoogleSignin.signIn();
+      const idToken = response.data?.idToken;
+      const userName = response.data?.user?.name;
+      const userEmail = response.data?.user?.email;
+      const userPhoto = response.data?.user?.photo;
+      
+      if (!idToken) {
+        throw new Error('No ID token received from Google');
+      }
+      
+      // Create Firebase credential using react-native-firebase
+      const auth = getAuth();
+      const credential = authModule.GoogleAuthProvider.credential(idToken);
+      
+      // Sign in to Firebase with the Google credential
+      const userCredential = await auth.signInWithCredential(credential);
+      const firebaseUser = userCredential.user;
+      
+      console.log('Google signup successful:', firebaseUser.uid);
+      
+      // Create Firestore document for new user
+      await setDoc(doc(firestore, 'users', firebaseUser.uid), {
+        name: userName || '',
+        email: userEmail || firebaseUser.email || '',
+        photoURL: userPhoto || '',
+        createdAt: new Date(),
+        profileComplete: false,
+        authProvider: 'google',
+      });
+      
+      // Navigate to onboarding screen after successful signup
+      if (onNavigateToOnboarding) {
+        onNavigateToOnboarding();
+      }
+    } catch (error: any) {
+      console.error('Google signup error:', error);
+      
+      // Map Google error codes to user-friendly messages
+      const errorMessages: { [key: string]: string } = {
+        '-1': 'Google Sign-Up was cancelled.',
+        '12500': 'Google Play Services error. Please check your Google Play Services installation.',
+        '12501': 'Sign-up cancelled or no credentials available.',
+        'NETWORK_ERROR': 'Network error. Please check your connection and try again.',
+      };
+      
+      const friendlyMessage = errorMessages[error.code?.toString()] || 'Unable to sign up with Google. Please try again.';
+      Alert.alert('Google Sign Up Failed', friendlyMessage);
+    } finally {
+      setIsLoading(false);
     }
   };
 

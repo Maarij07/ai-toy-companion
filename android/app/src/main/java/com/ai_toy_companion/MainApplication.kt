@@ -1,4 +1,4 @@
-package com.ai_toy_companion
+package com.example.aitoycompanion
 
 import android.app.Application
 import com.facebook.react.PackageList

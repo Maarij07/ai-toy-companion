@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "708825188624",
+    "project_id": "aitoycompanion",
+    "storage_bucket": "aitoycompanion.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:708825188624:android:143ac625880b0ceeafbd95",
+        "android_client_info": {
+          "package_name": "com.example.aitoycompanion"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "708825188624-aba1l7jag9b5omnok4mhme8gft97sg7q.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCMpvfNEERWPqIWgt0gG9EITPvEX_HDMa4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "708825188624-aba1l7jag9b5omnok4mhme8gft97sg7q.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

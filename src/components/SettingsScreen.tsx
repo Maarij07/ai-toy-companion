@@ -8,9 +8,11 @@ import {
   Switch,
   Image,
   Platform,
+  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/Ionicons';
+import { getAuth } from '../config/firebase';
 const colors = require('../config/colors');
 
 const SettingsScreen = ({ onNavigateToHome }: { onNavigateToHome?: () => void; }) => {
@@ -41,6 +43,34 @@ const SettingsScreen = ({ onNavigateToHome }: { onNavigateToHome?: () => void; }
     amount: '$9.99',
     period: '/month'
   });
+
+  const handleLogout = async () => {
+    Alert.alert(
+      'Sign Out',
+      'Are you sure you want to sign out?',
+      [
+        {
+          text: 'Cancel',
+          onPress: () => {},
+          style: 'cancel',
+        },
+        {
+          text: 'Sign Out',
+          onPress: async () => {
+            try {
+              await getAuth().signOut();
+              // App.tsx will automatically navigate to login on auth state change
+            } catch (error: any) {
+              console.error('Logout error:', error);
+              Alert.alert('Error', 'Failed to sign out. Please try again.');
+            }
+          },
+          style: 'destructive',
+        },
+      ],
+      { cancelable: false }
+    );
+  };
 
   return (
     <SafeAreaView style={styles.container}>
@@ -238,7 +268,7 @@ const SettingsScreen = ({ onNavigateToHome }: { onNavigateToHome?: () => void; }
 
         {/* Sign Out */}
         <View style={styles.signOutSection}>
-          <TouchableOpacity style={styles.signOutButton}>
+          <TouchableOpacity style={styles.signOutButton} onPress={handleLogout}>
             <Text style={styles.signOutButtonText}>Sign Out</Text>
           </TouchableOpacity>
         </View>

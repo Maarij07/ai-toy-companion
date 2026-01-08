@@ -11,14 +11,22 @@ import {
   TouchableWithoutFeedback,
   Keyboard,
   Image,
+  Alert,
 } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 const colors = require('../config/colors');
+
+// Firebase imports
+import { getAuth, firestore } from '../config/firebase';
+import { GoogleSignin } from '@react-native-google-signin/google-signin';
+import { updateDoc, doc, getDoc, setDoc } from '@react-native-firebase/firestore';
+import authModule from '@react-native-firebase/auth';
 
 const LoginScreen = ({ onNavigateToSignup, onNavigateToForgotPassword, onNavigateToHome }: { onNavigateToSignup?: () => void; onNavigateToForgotPassword?: () => void; onNavigateToHome?: () => void; }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
   const [isFocused, setIsFocused] = useState({
     email: false,
     password: false,
@@ -53,7 +61,7 @@ const LoginScreen = ({ onNavigateToSignup, onNavigateToForgotPassword, onNavigat
     });
   };
 
-  const handleLogin = () => {
+  const handleLogin = async () => {
     let newErrors = {
       email: '',
       password: '',
@@ -81,14 +89,43 @@ const LoginScreen = ({ onNavigateToSignup, onNavigateToForgotPassword, onNavigat
     setErrors(newErrors);
 
     if (!hasError) {
-      // Login logic would go here
-      console.log('Login attempt with:', { email, password });
-      // Navigate to home screen after successful login
-      // In a real app: navigation.navigate('Home');
-      
-      // For now, navigate to home page if email and password are provided
-      if (email && password && onNavigateToHome) {
-        onNavigateToHome();
+      setIsLoading(true);
+      try {
+        // Firebase email/password authentication
+        const userCredential = await getAuth().signInWithEmailAndPassword(email, password);
+        const user = userCredential.user;
+        console.log('Login successful:', user.uid);
+        
+        // Update last login timestamp in Firestore
+        try {
+          await updateDoc(doc(firestore, 'users', user.uid), {
+            lastLoginAt: new Date(),
+          });
+        } catch (err) {
+          console.warn('Could not update last login timestamp:', err);
+        }
+        
+        // Navigate to home screen after successful login
+        if (onNavigateToHome) {
+          onNavigateToHome();
+        }
+      } catch (error: any) {
+        console.error('Login error:', error);
+        
+        // Map Firebase error codes to user-friendly messages
+        const errorMessages: { [key: string]: string } = {
+          'auth/user-not-found': 'No account found with this email. Please sign up first.',
+          'auth/wrong-password': 'Incorrect password. Please try again.',
+          'auth/invalid-email': 'Please enter a valid email address.',
+          'auth/user-disabled': 'This account has been disabled. Please contact support.',
+          'auth/too-many-requests': 'Too many login attempts. Please try again later.',
+          'auth/network-request-failed': 'Network error. Please check your connection and try again.',
+        };
+        
+        const friendlyMessage = errorMessages[error.code] || 'Unable to sign in. Please try again.';
+        Alert.alert('Sign In Failed', friendlyMessage);
+      } finally {
+        setIsLoading(false);
       }
     }
   };
@@ -104,6 +141,83 @@ const LoginScreen = ({ onNavigateToSignup, onNavigateToForgotPassword, onNavigat
     // Navigate to sign up screen
     if (onNavigateToSignup) {
       onNavigateToSignup();
+    }
+  };
+  
+  const handleGoogleLogin = async () => {
+    try {
+      setIsLoading(true);
+      
+      // Configure Google Sign-In
+      await GoogleSignin.configure({
+        webClientId: "708825188624-aba1l7jag9b5omnok4mhme8gft97sg7q.apps.googleusercontent.com", // Your actual Google Web Client ID from google-services.json
+      });
+      
+      // Check if Google Play Services is available
+      await GoogleSignin.hasPlayServices();
+      
+      // Sign in with Google
+      const response = await GoogleSignin.signIn();
+      const idToken = response.data?.idToken;
+      const userName = response.data?.user?.name;
+      const userEmail = response.data?.user?.email;
+      const userPhoto = response.data?.user?.photo;
+      
+      if (!idToken) {
+        throw new Error('No ID token received from Google');
+      }
+      
+      // Create Firebase credential using react-native-firebase
+      const auth = getAuth();
+      const credential = authModule.GoogleAuthProvider.credential(idToken);
+      
+      // Sign in to Firebase with the Google credential
+      const userCredential = await auth.signInWithCredential(credential);
+      const firebaseUser = userCredential.user;
+      
+      console.log('Google login successful:', firebaseUser.uid);
+      
+      // Check if user exists in Firestore
+      const userDocRef = doc(firestore, 'users', firebaseUser.uid);
+      const userDocSnap = await getDoc(userDocRef);
+      
+      if (!userDocSnap.exists()) {
+        // New user - create Firestore document
+        await setDoc(userDocRef, {
+          name: userName || '',
+          email: userEmail || firebaseUser.email || '',
+          photoURL: userPhoto || '',
+          createdAt: new Date(),
+          lastLoginAt: new Date(),
+          profileComplete: false,
+          authProvider: 'google',
+        });
+      } else {
+        // Existing user - update last login
+        await updateDoc(userDocRef, {
+          lastLoginAt: new Date(),
+        });
+      }
+      
+      // Navigate to home screen after successful login
+      if (onNavigateToHome) {
+        onNavigateToHome();
+      }
+    } catch (error: any) {
+      console.error('Google login error:', error);
+      
+      // Map Google error codes to user-friendly messages
+      const errorMessages: { [key: string]: string } = {
+        '-1': 'Google Sign-In was cancelled.',
+        '12500': 'Google Play Services error. Please check your Google Play Services installation.',
+        '12501': 'Sign-in cancelled or no credentials available.',
+        'NETWORK_ERROR': 'Network error. Please check your connection and try again.',
+      };
+      
+      const friendlyMessage = errorMessages[error.code?.toString()] || 'Unable to sign in with Google. Please try again.';
+      Alert.alert('Google Sign In Failed', friendlyMessage);
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -196,8 +310,14 @@ const LoginScreen = ({ onNavigateToSignup, onNavigateToForgotPassword, onNavigat
             </TouchableOpacity>
 
             {/* Login Button */}
-            <TouchableOpacity style={styles.loginButton} onPress={handleLogin}>
-              <Text style={styles.loginButtonText}>Sign In</Text>
+            <TouchableOpacity 
+              style={[styles.loginButton, isLoading && styles.loginButtonDisabled]} 
+              onPress={handleLogin}
+              disabled={isLoading}
+            >
+              <Text style={styles.loginButtonText}>
+                {isLoading ? 'Signing in...' : 'Sign In'}
+              </Text>
             </TouchableOpacity>
 
             {/* Sign Up */}
@@ -217,7 +337,7 @@ const LoginScreen = ({ onNavigateToSignup, onNavigateToForgotPassword, onNavigat
 
             {/* Social Login Buttons */}
             <View style={styles.socialLoginContainer}>
-              <TouchableOpacity style={styles.socialButton}>
+              <TouchableOpacity style={styles.socialButton} onPress={handleGoogleLogin}>
                 <View style={styles.socialButtonContent}>
                   <Ionicons name="logo-google" size={24} color="#4285F4" style={styles.googleIcon} />
                   <Text style={styles.socialButtonText}>Continue with Google</Text>
@@ -376,6 +496,9 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.2,
     shadowRadius: 8,
     elevation: 4,
+  },
+  loginButtonDisabled: {
+    opacity: 0.6,
   },
   loginButtonText: {
     fontSize: 18,

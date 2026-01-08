@@ -1,4 +1,4 @@
-package com.ai_toy_companion
+package com.example.aitoycompanion
 
 import com.facebook.react.ReactActivity
 import com.facebook.react.ReactActivityDelegate
