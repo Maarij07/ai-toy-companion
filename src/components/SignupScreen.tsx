@@ -25,8 +25,8 @@ import { GoogleSignin } from '@react-native-google-signin/google-signin';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 
 // Firebase imports
-import { getAuth, firestore } from '../config/firebase';
-import { setDoc, doc } from '@react-native-firebase/firestore';
+import { getAuth } from '../config/firebase';
+import { setDoc, doc, getFirestore } from '@react-native-firebase/firestore';
 import authModule from '@react-native-firebase/auth';
 
 // Firebase error service
@@ -68,8 +68,12 @@ const SignupScreen: React.FC<SignupScreenProps> = ({
 
   const validatePassword = (password: string) => {
     // At least 8 characters, 1 uppercase, 1 lowercase, 1 number
-    const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)[a-zA-Z\d@$!%*?&]{8,}$/;
-    return passwordRegex.test(password);
+    const hasMinLength = password.length >= 8;
+    const hasLowercase = /[a-z]/.test(password);
+    const hasUppercase = /[A-Z]/.test(password);
+    const hasNumber = /\d/.test(password);
+    
+    return hasMinLength && hasLowercase && hasUppercase && hasNumber;
   };
 
   const handleSignup = async () => {
@@ -128,7 +132,7 @@ const SignupScreen: React.FC<SignupScreenProps> = ({
         const user = userCredential.user;
         
         // Store additional user data in Firestore
-        await setDoc(doc(firestore, 'users', user.uid), {
+        await setDoc(doc(getFirestore(), 'users', user.uid), {
           name: name.trim(),
           email: email.toLowerCase(),
           createdAt: new Date(),
@@ -143,6 +147,18 @@ const SignupScreen: React.FC<SignupScreenProps> = ({
         }
       } catch (error: any) {
         console.error('Signup error:', error);
+        
+        // Get the current auth state before attempting cleanup
+        const authInstance = getAuth();
+        const currentUserId = authInstance.currentUser?.uid;
+        
+        // If user was created but Firestore operation failed, sign out the user
+        try {
+          await authInstance.signOut();
+          console.log('User signed out due to signup failure');
+        } catch (signOutError) {
+          console.error('Error signing out after failed registration:', signOutError);
+        }
         
         // Process the error using our error service
         const errorMessage = processFirebaseError(error);
@@ -187,7 +203,7 @@ const SignupScreen: React.FC<SignupScreenProps> = ({
       console.log('Google signup successful:', firebaseUser.uid);
       
       // Create Firestore document for new user
-      await setDoc(doc(firestore, 'users', firebaseUser.uid), {
+      await setDoc(doc(getFirestore(), 'users', firebaseUser.uid), {
         name: userName || '',
         email: userEmail || firebaseUser.email || '',
         photoURL: userPhoto || '',

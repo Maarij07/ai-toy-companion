@@ -1,33 +1,61 @@
 import React, { useState } from 'react';
 import {
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  StyleSheet,
-  ScrollView,
   KeyboardAvoidingView,
   Platform,
   TouchableWithoutFeedback,
   Keyboard,
+  ScrollView,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-const colors = require('../config/colors');
+import { 
+  Box, 
+  Text, 
+  Input, 
+  InputField, 
+  InputIcon, 
+  InputSlot, 
+  Button, 
+  ButtonText, 
+  FormControl, 
+  FormControlError, 
+  FormControlErrorText, 
+  FormControlLabel, 
+  FormControlLabelText, 
+  HStack, 
+  VStack, 
+  Center, 
+  Pressable,
+  Badge,
+  BadgeText,
+  Textarea,
+  TextareaInput,
+  Heading
+} from '@gluestack-ui/themed';
+import { User, ToyBrick, Star, Sparkles, Plus, Minus } from 'lucide-react-native';
 
-const SetupScreen = ({ onNavigateToHome }: { onNavigateToHome?: () => void; }) => {
+// Firebase imports
+import { getAuth } from '../config/firebase';
+import { doc, getFirestore, setDoc, getDoc } from '@react-native-firebase/firestore';
+
+interface Owner {
+  name: string;
+  age: string;
+}
+
+interface SetupScreenProps {
+  onNavigateToHome?: () => void;
+}
+
+const SetupScreen: React.FC<SetupScreenProps> = ({ onNavigateToHome }) => {
   const [toyName, setToyName] = useState('');
-  const [owners, setOwners] = useState([{ name: '', age: '' }]);
+  const [owners, setOwners] = useState<Owner[]>([{ name: '', age: '' }]);
   const [customPrompt, setCustomPrompt] = useState('');
   const [selectedInterests, setSelectedInterests] = useState<string[]>([]);
-  const [isFocused, setIsFocused] = useState({
-    toyName: false,
-    customPrompt: false,
-  });
   const [errors, setErrors] = useState({
     toyName: '',
     owners: [{ name: '', age: '' }],
   });
-
+  const [isLoading, setIsLoading] = useState(false);
 
   const interests = [
     'Creative Arts',
@@ -48,7 +76,7 @@ const SetupScreen = ({ onNavigateToHome }: { onNavigateToHome?: () => void; }) =
     });
   };
 
-  const updateOwner = (index: number, field: string, value: string) => {
+  const updateOwner = (index: number, field: keyof Owner, value: string) => {
     const updatedOwners = [...owners];
     updatedOwners[index] = { ...updatedOwners[index], [field]: value };
     setOwners(updatedOwners);
@@ -79,20 +107,6 @@ const SetupScreen = ({ onNavigateToHome }: { onNavigateToHome?: () => void; }) =
     } else {
       setSelectedInterests([...selectedInterests, interest]);
     }
-  };
-
-  const handleFocus = (field: string) => {
-    setIsFocused({
-      ...isFocused,
-      [field]: true,
-    });
-  };
-
-  const handleBlur = (field: string) => {
-    setIsFocused({
-      ...isFocused,
-      [field]: false,
-    });
   };
 
   const validateInputs = () => {
@@ -126,431 +140,305 @@ const SetupScreen = ({ onNavigateToHome }: { onNavigateToHome?: () => void; }) =
     return !hasError;
   };
 
-  const handleCompleteSetup = () => {
+  const handleCompleteSetup = async () => {
     if (validateInputs()) {
-      // Setup completion logic would go here
-      console.log('Completing setup with:', {
-        toyName,
-        owners,
-        selectedInterests,
-        customPrompt
-      });
-      // In a real app: navigation.navigate('Home');
-      if (onNavigateToHome) {
-        onNavigateToHome();
+      setIsLoading(true);
+      try {
+        // Get the current user
+        const auth = getAuth();
+        const currentUser = auth.currentUser;
+        
+        if (currentUser) {
+          // Create toy data object
+          const toyData = {
+            name: toyName.trim(),
+            owners: owners,
+            interests: selectedInterests,
+            customPersonality: customPrompt,
+            createdAt: new Date(),
+            connected: true,
+          };
+          
+          // Get the current user document
+          const userDocRef = doc(getFirestore(), 'users', currentUser.uid);
+          const userDoc = await getDoc(userDocRef);
+          
+          if (userDoc.exists()) {
+            // Get existing toys array or initialize as empty array
+            const userData = userDoc.data() as any;
+            const existingToys = userData.toys || [];
+            
+            // Add the new toy to the array
+            const updatedToys = [...existingToys, toyData];
+            
+            // Update the user document with the new toys array
+            await setDoc(userDocRef, {
+              ...userData,
+              toys: updatedToys,
+            }, { merge: true });
+          } else {
+            // If user doc doesn't exist, create it with the toy
+            await setDoc(userDocRef, {
+              toys: [toyData],
+            });
+          }
+          
+          console.log('Toy setup completed and saved:', toyData);
+        }
+        
+        // Navigate to home screen
+        if (onNavigateToHome) {
+          onNavigateToHome();
+        }
+      } catch (error) {
+        console.error('Error saving toy data:', error);
+        // Optionally show an error message to the user
+      } finally {
+        setIsLoading(false);
       }
     }
   };
 
   return (
     <KeyboardAvoidingView
-      style={styles.container}
+      style={{ flex: 1 }}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
       <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-        <SafeAreaView style={styles.safeArea}>
-          <ScrollView contentContainerStyle={styles.scrollContent}>
+        <SafeAreaView style={{ flex: 1, backgroundColor: '#FFFFFF' }}>
+          <ScrollView 
+            contentContainerStyle={{ 
+              paddingHorizontal: 16,
+              paddingVertical: 20,
+              flexGrow: 1,
+              backgroundColor: '$backgroundLight0',
+            }}
+          >
             {/* Header */}
-            <View style={styles.header}>
-              <Text style={styles.title}>Set Up Your AI Buddy</Text>
-            </View>
+            <Center mb="$6">
+              <Box mb="$2">
+                <ToyBrick size={48} color="#6D8B74" />
+              </Box>
+              <Heading size="xl" color="$textDark800" textAlign="center" mb="$2">
+                Set Up Your AI Buddy
+              </Heading>
+              <Text size="sm" color="$textDark500" textAlign="center">
+                Complete the setup to connect your toy
+              </Text>
+            </Center>
 
-            {/* Toy Name Input */}
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>Give your AI Buddy a name</Text>
-              <View
-                style={[
-                  styles.inputContainer,
-                  isFocused.toyName && styles.inputContainerFocused,
-                  errors.toyName ? styles.inputContainerError : null,
-                ]}
-              >
-                <TextInput
-                  style={styles.input}
-                  value={toyName}
-                  onChangeText={setToyName}
-                  placeholder="Enter toy name"
-                  placeholderTextColor={colors.textTertiary}
-                  onFocus={() => handleFocus('toyName')}
-                  onBlur={() => handleBlur('toyName')}
-                  autoCapitalize="words"
-                  autoCorrect={false}
-                />
-              </View>
-              {errors.toyName ? <Text style={styles.errorText}>{errors.toyName}</Text> : null}
-            </View>
+            <VStack space="lg" flex={1}>
+              {/* Toy Name Input */}
+              <FormControl isInvalid={!!errors.toyName}>
+                <FormControlLabel mb="$2">
+                  <FormControlLabelText color="$textDark800">Give your AI Buddy a name</FormControlLabelText>
+                </FormControlLabel>
+                <Input borderColor="$borderLight300" borderWidth="$1" borderRadius="$lg" bg="$backgroundLight0" h="$12" py="$3">
+                  <InputSlot pl="$3">
+                    <InputIcon as={ToyBrick} color="$textDark800" />
+                  </InputSlot>
+                  <InputField 
+                    placeholder="Enter toy name" 
+                    placeholderTextColor="$textDark500"
+                    color="$textDark800"
+                    value={toyName}
+                    onChangeText={setToyName}
+                    autoCapitalize="words"
+                    autoCorrect={false}
+                  />
+                </Input>
+                <FormControlError>
+                  <FormControlErrorText>{errors.toyName}</FormControlErrorText>
+                </FormControlError>
+              </FormControl>
 
-            {/* Owners Section */}
-            <Text style={styles.sectionTitle}>Add Owners</Text>
-            
-            {owners.map((owner, index) => (
-              <View key={index} style={styles.ownerInputGroup}>
-                <View style={styles.ownerHeader}>
-                  <Text style={styles.ownerLabel}>Owner {index + 1}</Text>
-                  {owners.length > 1 && (
-                    <TouchableOpacity style={styles.removeOwnerButton} onPress={() => removeOwner(index)}>
-                      <Text style={styles.removeOwnerButtonText}>Remove</Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
+              {/* Owners Section */}
+              <VStack space="md">
+                <HStack justifyContent="space-between" alignItems="center">
+                  <Heading size="md" color="$textDark800" mb="$2">
+                    Add Owners
+                  </Heading>
+                </HStack>
                 
-                <View style={styles.inputGroup}>
-                  <Text style={styles.label}>Owner name</Text>
-                  <View
-                    style={[
-                      styles.inputContainer,
-                      errors.owners[index]?.name ? styles.inputContainerError : null,
-                    ]}
-                  >
-                    <TextInput
-                      style={styles.input}
-                      value={owner.name}
-                      onChangeText={(value) => updateOwner(index, 'name', value)}
-                      placeholder="Enter owner name"
-                      placeholderTextColor={colors.textTertiary}
-                      autoCapitalize="words"
-                      autoCorrect={false}
-                    />
-                  </View>
-                  {errors.owners[index]?.name ? <Text style={styles.errorText}>{errors.owners[index].name}</Text> : null}
-                </View>
+                {owners.map((owner, index) => (
+                  <Box key={index} bg="$backgroundLight0" borderRadius="$lg" p="$4" borderWidth="$1" borderColor="$borderLight300">
+                    <HStack justifyContent="space-between" alignItems="center" mb="$3">
+                      <Text size="sm" fontWeight="$medium" color="$textDark800">
+                        Owner {index + 1}
+                      </Text>
+                      {owners.length > 1 && (
+                        <Pressable onPress={() => removeOwner(index)}>
+                          <Minus size={20} color="#EF4444" />
+                        </Pressable>
+                      )}
+                    </HStack>
+                    
+                    <VStack space="md">
+                      {/* Owner Name */}
+                      <FormControl isInvalid={!!errors.owners[index]?.name}>
+                        <FormControlLabel mb="$2">
+                          <FormControlLabelText color="$textDark800">Owner name</FormControlLabelText>
+                        </FormControlLabel>
+                        <Input borderColor="$borderLight300" borderWidth="$1" borderRadius="$lg" bg="$backgroundLight0" h="$12" py="$3">
+                          <InputSlot pl="$3">
+                            <InputIcon as={User} color="$textDark800" />
+                          </InputSlot>
+                          <InputField 
+                            placeholder="Enter owner name" 
+                            placeholderTextColor="$textDark500"
+                            color="$textDark800"
+                            value={owner.name}
+                            onChangeText={(value) => updateOwner(index, 'name', value)}
+                            autoCapitalize="words"
+                            autoCorrect={false}
+                          />
+                        </Input>
+                        <FormControlError>
+                          <FormControlErrorText>{errors.owners[index]?.name}</FormControlErrorText>
+                        </FormControlError>
+                      </FormControl>
 
-                <View style={styles.inputGroup}>
-                  <Text style={styles.label}>Age</Text>
-                  <View
-                    style={[
-                      styles.inputContainer,
-                      errors.owners[index]?.age ? styles.inputContainerError : null,
-                    ]}
-                  >
-                    <TextInput
-                      style={styles.input}
-                      value={owner.age}
-                      onChangeText={(value) => updateOwner(index, 'age', value)}
-                      placeholder="Enter age"
-                      placeholderTextColor={colors.textTertiary}
-                      keyboardType="numeric"
-                      autoCapitalize="none"
-                      autoCorrect={false}
-                    />
-                  </View>
-                  {errors.owners[index]?.age ? <Text style={styles.errorText}>{errors.owners[index].age}</Text> : null}
-                </View>
-              </View>
-            ))}
-            
-            <TouchableOpacity style={styles.addOwnerButton} onPress={addOwner}>
-              <Text style={styles.addOwnerButtonText}>+ Add Another Owner</Text>
-            </TouchableOpacity>
-
-            {/* Interests Section */}
-            <Text style={styles.sectionTitle}>Interests</Text>
-            <Text style={styles.sectionSubtitle}>Select interests for your AI Buddy</Text>
-            
-            <View style={styles.interestsContainer}>
-              {interests.map((interest, index) => (
-                <TouchableOpacity
-                  key={index}
-                  style={[
-                    styles.interestButton,
-                    selectedInterests.includes(interest) && styles.interestButtonSelected,
-                  ]}
-                  onPress={() => toggleInterest(interest)}
+                      {/* Owner Age */}
+                      <FormControl isInvalid={!!errors.owners[index]?.age}>
+                        <FormControlLabel mb="$2">
+                          <FormControlLabelText color="$textDark800">Age</FormControlLabelText>
+                        </FormControlLabel>
+                        <Input borderColor="$borderLight300" borderWidth="$1" borderRadius="$lg" bg="$backgroundLight0" h="$12" py="$3">
+                          <InputSlot pl="$3">
+                            <InputIcon as={Star} color="$textDark800" />
+                          </InputSlot>
+                          <InputField 
+                            placeholder="Enter age" 
+                            placeholderTextColor="$textDark500"
+                            color="$textDark800"
+                            value={owner.age}
+                            onChangeText={(value) => updateOwner(index, 'age', value)}
+                            keyboardType="numeric"
+                            autoCapitalize="none"
+                            autoCorrect={false}
+                          />
+                        </Input>
+                        <FormControlError>
+                          <FormControlErrorText>{errors.owners[index]?.age}</FormControlErrorText>
+                        </FormControlError>
+                      </FormControl>
+                    </VStack>
+                  </Box>
+                ))}
+                
+                <Button 
+                  variant="outline" 
+                  borderColor="$borderLight300" 
+                  bg="$backgroundLight0"
+                  onPress={addOwner}
+                  h="$12"
+                  py="$3"
+                  alignItems="center"
+                  justifyContent="center"
                 >
-                  <Text
-                    style={[
-                      styles.interestButtonText,
-                      selectedInterests.includes(interest) && styles.interestButtonTextSelected,
-                    ]}
+                  <HStack alignItems="center" space="sm">
+                    <Plus size={20} color="#6D8B74" />
+                    <ButtonText color="$textDark800">Add Another Owner</ButtonText>
+                  </HStack>
+                </Button>
+              </VStack>
+
+              {/* Interests Section */}
+              <VStack space="md">
+                <Heading size="md" color="$textDark800" mb="$2">
+                  Interests
+                </Heading>
+                <Text size="sm" color="$textDark500" mb="$3">
+                  Select interests for your AI Buddy
+                </Text>
+                
+                <HStack flexWrap="wrap" space="md">
+                  {interests.map((interest, index) => (
+                    <Pressable 
+                      key={index} 
+                      onPress={() => toggleInterest(interest)}
+                      m="$1"
+                    >
+                      <Badge 
+                        variant={selectedInterests.includes(interest) ? "solid" : "outline"}
+                        action={selectedInterests.includes(interest) ? "success" : "muted"}
+                        m="$0.5"
+                      >
+                        <BadgeText>{interest}</BadgeText>
+                      </Badge>
+                    </Pressable>
+                  ))}
+                </HStack>
+              </VStack>
+
+              {/* Custom Personality Prompt */}
+              <VStack space="md">
+                <Heading size="md" color="$textDark800" mb="$2">
+                  Custom personality prompt
+                </Heading>
+                
+                <FormControl>
+                  <FormControlLabel mb="$2">
+                    <FormControlLabelText color="$textDark800">Describe how you want Your AI Buddy to behave ...</FormControlLabelText>
+                  </FormControlLabel>
+                  <Textarea 
+                    borderColor="$borderLight300" 
+                    borderWidth="$1" 
+                    borderRadius="$lg" 
+                    bg="$backgroundLight0" 
+                    h="$32"
                   >
-                    {interest}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
+                    <TextareaInput 
+                      placeholder="Enter custom personality traits, behaviors, or preferences..." 
+                      placeholderTextColor="$textDark500"
+                      color="$textDark800"
+                      value={customPrompt}
+                      onChangeText={setCustomPrompt}
+                      textAlignVertical="top"
+                    />
+                  </Textarea>
+                </FormControl>
 
-            {/* Custom Personality Prompt */}
-            <Text style={styles.sectionTitle}>Custom personality prompt</Text>
-            
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>Describe how you want Your AI Buddy to behave ...</Text>
-              <View
-                style={[
-                  styles.textAreaContainer,
-                  isFocused.customPrompt && styles.inputContainerFocused,
-                ]}
-              >
-                <TextInput
-                  style={styles.textArea}
-                  value={customPrompt}
-                  onChangeText={setCustomPrompt}
-                  placeholder="Enter custom personality traits, behaviors, or preferences..."
-                  placeholderTextColor={colors.textTertiary}
-                  onFocus={() => handleFocus('customPrompt')}
-                  onBlur={() => handleBlur('customPrompt')}
-                  multiline
-                  textAlignVertical="top"
-                />
-              </View>
-            </View>
-
-            <TouchableOpacity style={styles.generateButton} disabled={!customPrompt.trim()}>
-              <Text style={styles.generateButtonText}>Generate</Text>
-            </TouchableOpacity>
+                <Button 
+                  variant="outline" 
+                  borderColor="$borderLight300" 
+                  bg="$backgroundLight0"
+                  h="$12"
+                  py="$3"
+                  alignItems="center"
+                  justifyContent="center"
+                  disabled={!customPrompt.trim()}
+                >
+                  <HStack alignItems="center" space="sm">
+                    <Sparkles size={20} color="#6D8B74" />
+                    <ButtonText color="$textDark800">Generate</ButtonText>
+                  </HStack>
+                </Button>
+              </VStack>
+            </VStack>
           </ScrollView>
 
           {/* Complete Setup Button */}
-          <View style={styles.buttonContainer}>
-            <TouchableOpacity 
-              style={[
-                styles.completeButton, 
-                (!toyName.trim() || owners.some(owner => !owner.name.trim() || !owner.age.trim())) && styles.disabledButton
-              ]} 
-              onPress={handleCompleteSetup}
+          <Box p="$4" bg="$backgroundLight0">
+            <Button 
+              bg="$primary500" 
+              py="$3" 
+              h="$12" 
+              borderRadius="$lg" 
+              onPress={handleCompleteSetup} 
               disabled={!toyName.trim() || owners.some(owner => !owner.name.trim() || !owner.age.trim())}
+              alignItems="center"
+              justifyContent="center"
             >
-              <Text style={styles.completeButtonText}>Complete Setup</Text>
-            </TouchableOpacity>
-          </View>
+              <ButtonText color="$white" fontWeight="$semibold" textAlign="center">
+                Complete Setup
+              </ButtonText>
+            </Button>
+          </Box>
         </SafeAreaView>
       </TouchableWithoutFeedback>
     </KeyboardAvoidingView>
   );
 };
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.background,
-  },
-  safeArea: {
-    flex: 1,
-  },
-  scrollContent: {
-    paddingBottom: 20,
-    paddingHorizontal: 24,
-  },
-  header: {
-    paddingTop: 20,
-    paddingBottom: 30,
-    alignItems: 'center',
-  },
-  backButton: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    padding: 8,
-    zIndex: 1,
-  },
-  backButtonText: {
-    fontSize: 24,
-    color: colors.textPrimary,
-  },
-  title: {
-    fontSize: 28,
-    fontWeight: '700',
-    color: colors.textPrimary,
-    textAlign: 'center',
-  },
-  inputGroup: {
-    marginBottom: 20,
-  },
-  label: {
-    fontSize: 16,
-    fontWeight: '500',
-    color: colors.textPrimary,
-    marginBottom: 8,
-  },
-  sectionTitle: {
-    fontSize: 20,
-    fontWeight: '600',
-    color: colors.textPrimary,
-    marginTop: 20,
-    marginBottom: 8,
-  },
-  sectionSubtitle: {
-    fontSize: 14,
-    color: colors.textSecondary,
-    marginBottom: 12,
-  },
-  inputContainer: {
-    height: 56,
-    borderWidth: 2,
-    borderColor: colors.surfaceLight,
-    borderRadius: 16,
-    backgroundColor: colors.surface,
-    paddingHorizontal: 16,
-    justifyContent: 'center',
-    shadowColor: colors.textTertiary,
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  textAreaContainer: {
-    minHeight: 120,
-    borderWidth: 2,
-    borderColor: colors.surfaceLight,
-    borderRadius: 16,
-    backgroundColor: colors.surface,
-    paddingHorizontal: 16,
-    paddingTop: 16,
-    shadowColor: colors.textTertiary,
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  inputContainerFocused: {
-    borderColor: colors.primary,
-  },
-  inputContainerError: {
-    borderColor: colors.error,
-  },
-  input: {
-    fontSize: 16,
-    color: colors.textPrimary,
-    height: '100%',
-  },
-  textArea: {
-    fontSize: 16,
-    color: colors.textPrimary,
-    flex: 1,
-  },
-  errorText: {
-    fontSize: 14,
-    color: colors.error,
-    marginTop: 8,
-    marginLeft: 4,
-  },
-  interestsContainer: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'space-between',
-    marginBottom: 20,
-  },
-  interestButton: {
-    flexBasis: '48%',
-    height: 48,
-    borderWidth: 1,
-    borderColor: colors.surfaceLight,
-    borderRadius: 12,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 10,
-    backgroundColor: colors.surface,
-  },
-  interestButtonSelected: {
-    backgroundColor: colors.primary,
-    borderColor: colors.primary,
-  },
-  interestButtonText: {
-    fontSize: 14,
-    color: colors.textPrimary,
-    fontWeight: '500',
-  },
-  interestButtonTextSelected: {
-    color: colors.textLight,
-  },
-  generateButton: {
-    backgroundColor: colors.secondary,
-    height: 48,
-    borderRadius: 12,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginTop: 10,
-    marginBottom: 30,
-    shadowColor: colors.secondary,
-    shadowOffset: {
-      width: 0,
-      height: 4,
-    },
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  generateButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: colors.textPrimary,
-  },
-  buttonContainer: {
-    paddingHorizontal: 24,
-    paddingBottom: 20,
-  },
-  completeButton: {
-    backgroundColor: colors.primary,
-    height: 56,
-    borderRadius: 16,
-    justifyContent: 'center',
-    alignItems: 'center',
-    shadowColor: colors.primary,
-    shadowOffset: {
-      width: 0,
-      height: 4,
-    },
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  completeButtonText: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: colors.textLight,
-  },
-  ownerInputGroup: {
-    backgroundColor: colors.surface,
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: colors.surfaceLight,
-  },
-  ownerHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  ownerLabel: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: colors.textPrimary,
-  },
-  removeOwnerButton: {
-    backgroundColor: colors.error,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 8,
-  },
-  removeOwnerButtonText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: colors.textLight,
-  },
-  addOwnerButton: {
-    backgroundColor: colors.primary,
-    height: 48,
-    borderRadius: 12,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginTop: 10,
-    marginBottom: 20,
-  },
-  addOwnerButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: colors.textLight,
-  },
-  disabledButton: {
-    backgroundColor: colors.textTertiary,
-  },
-});
 
 export default SetupScreen;

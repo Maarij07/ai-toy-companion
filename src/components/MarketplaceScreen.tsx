@@ -1,32 +1,41 @@
 import React, { useState, useRef } from 'react';
 import {
-  View,
-  Text,
-  TouchableOpacity,
-  StyleSheet,
-  ScrollView,
   FlatList,
-  Image,
-  TextInput,
-  Animated,
   SafeAreaView,
-  StatusBar,
+  ScrollView as RNScrollView
 } from 'react-native';
-import Icon from 'react-native-vector-icons/Ionicons';
-
-const colors = {
-  primary: '#6D8B74',
-  secondary: '#FFD166',
-  pink: '#EF7C8E',
-  cream: '#F8F4E9',
-  surface: '#FFFFFF',
-  textPrimary: '#3C3C3C',
-  textSecondary: '#6B6B6B',
-  textTertiary: '#9B9B9B',
-  border: '#E5E5E5',
-  background: '#FAFAFA',
-  error: '#EF7C8E',
-};
+import { 
+  Box, 
+  Text, 
+  Button, 
+  ButtonText, 
+  VStack, 
+  HStack, 
+  Image,
+  Input,
+  InputField,
+  InputIcon,
+  Pressable,
+  Heading,
+  Icon,
+  Divider,
+  Card,
+  Avatar,
+  Badge,
+  BadgeText,
+  Spinner
+} from '@gluestack-ui/themed';
+import { 
+  User, 
+  Bell, 
+  Search, 
+  Filter,
+  Star,
+  Heart,
+  X,
+  SlidersHorizontal,
+  ChevronRight
+} from 'lucide-react-native';
 
 interface Product {
   id: number;
@@ -54,9 +63,6 @@ const MarketplaceScreen: React.FC<MarketplaceScreenProps> = ({ navigation, onNav
   const [activeTab, setActiveTab] = useState('All');
   const [searchQuery, setSearchQuery] = useState('');
   const [showClearButton, setShowClearButton] = useState(false);
-  
-  const searchInputScale = useRef(new Animated.Value(1)).current;
-  const tabScrollRef = useRef<ScrollView>(null);
   
   const marketplaceItems: Product[] = [
     {
@@ -213,39 +219,70 @@ const MarketplaceScreen: React.FC<MarketplaceScreenProps> = ({ navigation, onNav
     setShowClearButton(false);
   };
 
-  const handleSearchFocus = () => {
-    Animated.spring(searchInputScale, {
-      toValue: 1.01,
-      useNativeDriver: true,
-    }).start();
-  };
+  // Header and filter components to be rendered in the FlatList
+  const ListHeaderComponent = () => (
+    <>
+      {/* Search Bar */}
+      <Box p="$4">
+        <Input variant="outline" size="lg" borderRadius="$lg" borderWidth="$1" borderColor="$borderLight400" bg="$backgroundLight0">
+          <InputField 
+            placeholder="Search toys, accessories..."
+            placeholderTextColor="$textDark800" 
+            value={searchQuery}
+            onChangeText={handleSearchChange}
+            py="$3.5"
+            pl="$10"
+            pr="$6"
+          />
+          <InputIcon as={Search} position="absolute" left="$3" top="$3.5" size="sm" color="$textDark800" />
+          {showClearButton && (
+            <Pressable position="absolute" right="$4" top="$3.5" onPress={clearSearch}>
+              <Icon as={X} size="sm" color="$textDark800" />
+            </Pressable>
+          )}
+        </Input>
+      </Box>
+      
+      {/* Category Tabs */}
+      <RNScrollView horizontal showsHorizontalScrollIndicator={false} style={{ paddingHorizontal: 16, marginBottom: 8 }}>
+        <HStack space="md">
+          {tabs.map((tab) => (
+            <Pressable
+              key={tab.id}
+              onPress={() => setActiveTab(tab.id)}
+            >
+              <Box 
+                bg={activeTab === tab.id ? '$primary500' : '$backgroundLight0'} 
+                borderRadius="$full" 
+                px="$4" 
+                py="$2"
+                borderWidth={activeTab === tab.id ? 0 : 1}
+                borderColor={activeTab === tab.id ? 'transparent' : '$borderLight300'}
+              >
+                <Text 
+                  color={activeTab === tab.id ? '$textLight50' : '$textDark800'} 
+                  fontWeight={activeTab === tab.id ? '$bold' : '$normal'}
+                >
+                  {tab.label}
+                </Text>
+              </Box>
+            </Pressable>
+          ))}
+        </HStack>
+      </RNScrollView>
+      
+      {/* Results Count */}
+      <HStack justifyContent="space-between" alignItems="center" px="$4" pt="$4" pb="$3">
+        <Text size="sm" color="$textDark500">
+          {filteredItems.length} {filteredItems.length === 1 ? 'item' : 'items'} found
+        </Text>
+      </HStack>
+    </>
+  );
 
-  const handleSearchBlur = () => {
-    Animated.spring(searchInputScale, {
-      toValue: 1,
-      useNativeDriver: true,
-    }).start();
-  };
-
-  const getBadgeColor = (badge: string | null) => {
-    if (!badge) return colors.primary;
-    switch (badge) {
-      case 'New':
-        return colors.secondary;
-      case 'Popular':
-        return colors.primary;
-      case 'Sale':
-        return colors.pink;
-      default:
-        return colors.primary;
-    }
-  };
-
-  const renderCard = ({ item }: { item: Product }) => {
+  const renderProductCard = ({ item }: { item: Product }) => {
     return (
-      <TouchableOpacity 
-        style={styles.card}
-        activeOpacity={0.8}
+      <Pressable 
         onPress={() => {
           if (onNavigateToProductDetail) {
             onNavigateToProductDetail(item);
@@ -253,388 +290,92 @@ const MarketplaceScreen: React.FC<MarketplaceScreenProps> = ({ navigation, onNav
             navigation.navigate('ProductDetail', { product: item });
           }
         }}
+        m="$2"
+        flex={1}
+        maxWidth="48%"
       >
-        <View style={styles.cardImageContainer}>
-          <Image 
-            source={{ uri: item.image }} 
-            style={styles.cardImage}
-          />
-          {item.badge && (
-            <View style={[styles.badge, { backgroundColor: getBadgeColor(item.badge) }]}>
-              <Text style={styles.badgeText}>{item.badge}</Text>
-            </View>
-          )}
-          {item.discount > 0 && (
-            <View style={styles.discountBadge}>
-              <Text style={styles.discountText}>-{item.discount}%</Text>
-            </View>
-          )}
-        </View>
-        
-        <View style={styles.cardBody}>
-          <Text style={styles.cardTitle} numberOfLines={2}>{item.name}</Text>
-          <Text style={styles.brandText} numberOfLines={1}>{item.brand}</Text>
+        <Card borderRadius="$lg" borderWidth={0.5} borderColor="$borderLight300" overflow="hidden">
+          <Box position="relative">
+            <Image 
+              source={{ uri: item.image }} 
+              alt={item.name}
+              size="full" 
+              resizeMode="cover"
+              style={{ width: '100%', height: 100 }}
+            />
+          </Box>
           
-          <View style={styles.ratingRow}>
-            <Icon name="star" size={12} color={colors.secondary} />
-            <Text style={styles.ratingText}>{item.rating}</Text>
-            <Text style={styles.reviewsText}>({item.reviews})</Text>
-          </View>
-          
-          <View style={styles.priceRow}>
-            <View style={styles.priceContainer}>
-              <Text style={styles.currentPrice}>${item.price.toFixed(2)}</Text>
-              {item.originalPrice && (
-                <Text style={styles.originalPrice}>${item.originalPrice.toFixed(2)}</Text>
-              )}
-            </View>
-          </View>
-        </View>
-      </TouchableOpacity>
+          <Box p="$2">
+            <Heading size="sm" numberOfLines={2} mb="$1" color="$textDark800">{item.name}</Heading>
+            <HStack alignItems="center" mb="$1">
+              <Text size="xs" color="$textDark500" flex={1}>{item.brand}</Text>
+              <HStack alignItems="center">
+                <Icon as={Star} size="xs" color="$yellow500" mr="$1" />
+                <Text size="xs" fontWeight="$medium" color="$textDark800">{item.rating}</Text>
+              </HStack>
+            </HStack>
+            
+            <Text size="md" fontWeight="$bold" color="$primary500" mb="$1">${item.price.toFixed(2)}</Text>
+            
+            <Button 
+              variant="solid" 
+              size="sm" 
+              bg="$primary500"
+              borderRadius="$full"
+              alignSelf="center"
+              onPress={() => {
+                if (onNavigateToProductDetail) {
+                  onNavigateToProductDetail(item);
+                } else if (navigation) {
+                  navigation.navigate('ProductDetail', { product: item });
+                }
+              }}
+            >
+              <ButtonText size="xs" color="$textLight50" fontWeight="$medium">View Details</ButtonText>
+              <Icon as={ChevronRight} size="xs" color="$textLight50" ml="$1" />
+            </Button>
+          </Box>
+        </Card>
+      </Pressable>
     );
   };
 
   return (
-    <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="dark-content" backgroundColor={colors.background} />
-      
-      {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity style={styles.headerButton}>
-          <Icon name="person-circle-outline" size={28} color={colors.textPrimary} />
-        </TouchableOpacity>
+    <SafeAreaView style={{ flex: 1, backgroundColor: '#FFFFFF' }}>
+      <VStack flex={1}>
+        {/* Header */}
+        <HStack justifyContent="space-between" alignItems="center" p="$4" bg="$backgroundLight0" borderBottomWidth={0.5} borderBottomColor="$borderLight300">
+          <Pressable p="$2">
+            <Icon as={User} size="xl" color="$textDark800" />
+          </Pressable>
+          
+          <Heading size="md" color="$textDark800">Marketplace</Heading>
+          
+          <Pressable p="$2">
+            <Icon as={Bell} size="lg" color="$textDark800" />
+          </Pressable>
+        </HStack>
         
-        <Text style={styles.headerTitle}>Marketplace</Text>
-        
-        <TouchableOpacity style={styles.headerButton}>
-          <Icon name="notifications-outline" size={24} color={colors.textPrimary} />
-        </TouchableOpacity>
-      </View>
-
-      {/* Search Bar */}
-      <View style={styles.searchSection}>
-        <Animated.View 
-          style={[styles.searchInputContainer, { transform: [{ scale: searchInputScale }] }]}
-        >
-          <Icon name="search-outline" size={18} color={colors.textTertiary} />
-          <TextInput
-            style={styles.searchInput}
-            placeholder="Search toys, accessories..."
-            placeholderTextColor={colors.textTertiary}
-            value={searchQuery}
-            onChangeText={handleSearchChange}
-            onFocus={handleSearchFocus}
-            onBlur={handleSearchBlur}
-          />
-          {showClearButton && (
-            <TouchableOpacity onPress={clearSearch} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-              <Icon name="close-circle" size={18} color={colors.textTertiary} />
-            </TouchableOpacity>
-          )}
-        </Animated.View>
-      </View>
-
-      {/* Category Tabs */}
-      <ScrollView 
-        ref={tabScrollRef}
-        horizontal 
-        showsHorizontalScrollIndicator={false}
-        style={styles.tabsContainer}
-        contentContainerStyle={styles.tabsContent}
-      >
-        {tabs.map((tab) => (
-          <TouchableOpacity
-            key={tab.id}
-            style={[styles.tab, activeTab === tab.id && styles.activeTab]}
-            onPress={() => setActiveTab(tab.id)}
-            activeOpacity={0.7}
-          >
-            <Text style={[styles.tabText, activeTab === tab.id && styles.activeTabText]}>
-              {tab.label}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </ScrollView>
-
-      {/* Results Count */}
-      <View style={styles.resultsBar}>
-        <Text style={styles.resultsText}>
-          {filteredItems.length} {filteredItems.length === 1 ? 'item' : 'items'} found
-        </Text>
-        <TouchableOpacity style={styles.filterButton}>
-          <Icon name="options-outline" size={16} color={colors.primary} />
-          <Text style={styles.filterText}>Filter</Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* Products Grid */}
-      <FlatList
-        data={filteredItems}
-        renderItem={renderCard}
-        keyExtractor={(item) => item.id.toString()}
-        numColumns={2}
-        contentContainerStyle={styles.gridContainer}
-        columnWrapperStyle={styles.columnWrapper}
-        showsVerticalScrollIndicator={false}
-        ListEmptyComponent={
-          <View style={styles.emptyContainer}>
-            <Icon name="search-outline" size={48} color={colors.textTertiary} />
-            <Text style={styles.emptyText}>No items found</Text>
-            <Text style={styles.emptySubtext}>Try adjusting your search or filters</Text>
-          </View>
-        }
-      />
+        {/* Products FlatList with header components */}
+        <FlatList
+          data={filteredItems}
+          renderItem={renderProductCard}
+          keyExtractor={(item) => item.id.toString()}
+          numColumns={2}
+          ListHeaderComponent={ListHeaderComponent}
+          contentContainerStyle={{ paddingHorizontal: 8 }}
+          showsVerticalScrollIndicator={false}
+          ListEmptyComponent={
+            <VStack flex={1} justifyContent="center" alignItems="center" py="$10">
+              <Icon as={Search} size="2xl" color="$textDark300" mb="$4" />
+              <Heading size="md" color="$textDark800" mb="$2">No items found</Heading>
+              <Text size="sm" color="$textDark500" textAlign="center">Try adjusting your search or filters</Text>
+            </VStack>
+          }
+        />
+      </VStack>
     </SafeAreaView>
   );
 };
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.background,
-  },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    backgroundColor: colors.background,
-  },
-  headerTitle: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: colors.textPrimary,
-  },
-  headerButton: {
-    padding: 4,
-  },
-  cartButton: {
-    position: 'relative',
-    padding: 8,
-  },
-  cartBadge: {
-    position: 'absolute',
-    top: 4,
-    right: 4,
-    backgroundColor: colors.pink,
-    borderRadius: 8,
-    width: 16,
-    height: 16,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  cartBadgeText: {
-    fontSize: 9,
-    fontWeight: '700',
-    color: colors.surface,
-  },
-  searchSection: {
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-  },
-  searchInputContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.surface,
-    borderRadius: 10,
-    paddingHorizontal: 14,
-    height: 44,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  searchInput: {
-    flex: 1,
-    fontSize: 14,
-    color: colors.textPrimary,
-    marginLeft: 10,
-    paddingVertical: 0,
-  },
-  tabsContainer: {
-    maxHeight: 50,
-  },
-  tabsContent: {
-    paddingHorizontal: 20,
-    paddingVertical: 8,
-  },
-  tab: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    marginRight: 8,
-    borderRadius: 20,
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  activeTab: {
-    backgroundColor: colors.primary,
-    borderColor: colors.primary,
-  },
-  tabText: {
-    fontSize: 13,
-    color: colors.textSecondary,
-    fontWeight: '500',
-  },
-  activeTabText: {
-    color: colors.surface,
-    fontWeight: '600',
-  },
-  resultsBar: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-  },
-  resultsText: {
-    fontSize: 13,
-    color: colors.textSecondary,
-    fontWeight: '500',
-  },
-  filterButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderWidth: 1,
-    borderColor: colors.primary,
-    borderRadius: 16,
-  },
-  filterText: {
-    fontSize: 12,
-    color: colors.primary,
-    marginLeft: 4,
-    fontWeight: '600',
-  },
-  gridContainer: {
-    paddingHorizontal: 16,
-    paddingBottom: 100,
-  },
-  columnWrapper: {
-    justifyContent: 'space-between',
-    marginBottom: 12,
-  },
-  card: {
-    width: '48%',
-    backgroundColor: colors.surface,
-    borderRadius: 12,
-    overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  cardImageContainer: {
-    width: '100%',
-    height: 140,
-    position: 'relative',
-    backgroundColor: colors.cream,
-  },
-  cardImage: {
-    width: '100%',
-    height: '100%',
-    resizeMode: 'cover',
-  },
-  badge: {
-    position: 'absolute',
-    top: 8,
-    left: 8,
-    borderRadius: 6,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-  },
-  badgeText: {
-    color: colors.surface,
-    fontSize: 10,
-    fontWeight: '700',
-  },
-  discountBadge: {
-    position: 'absolute',
-    top: 8,
-    right: 8,
-    backgroundColor: colors.pink,
-    borderRadius: 6,
-    paddingHorizontal: 6,
-    paddingVertical: 3,
-  },
-  discountText: {
-    color: colors.surface,
-    fontSize: 10,
-    fontWeight: '700',
-  },
-  cardBody: {
-    padding: 10,
-  },
-  cardTitle: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: colors.textPrimary,
-    marginBottom: 2,
-    lineHeight: 17,
-  },
-  brandText: {
-    fontSize: 11,
-    color: colors.textTertiary,
-    marginBottom: 6,
-  },
-  ratingRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  ratingText: {
-    fontSize: 12,
-    color: colors.textPrimary,
-    marginLeft: 4,
-    fontWeight: '600',
-  },
-  reviewsText: {
-    fontSize: 11,
-    color: colors.textSecondary,
-    marginLeft: 2,
-  },
-  priceRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingTop: 8,
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
-  },
-  priceContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  currentPrice: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: colors.primary,
-    marginRight: 6,
-  },
-  originalPrice: {
-    fontSize: 11,
-    color: colors.textTertiary,
-    textDecorationLine: 'line-through',
-  },
-  emptyContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingVertical: 60,
-  },
-  emptyText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: colors.textPrimary,
-    marginTop: 16,
-    marginBottom: 6,
-  },
-  emptySubtext: {
-    fontSize: 13,
-    color: colors.textSecondary,
-    textAlign: 'center',
-  },
-});
 
 export default MarketplaceScreen;

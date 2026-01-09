@@ -1,21 +1,48 @@
 import React, { useState } from 'react';
 import {
-  View,
-  Text,
-  TouchableOpacity,
-  StyleSheet,
   ScrollView,
-  Switch,
-  Image,
-  Platform,
   Alert,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import Icon from 'react-native-vector-icons/Ionicons';
+import { 
+  Box, 
+  Text, 
+  Button, 
+  ButtonText, 
+  VStack, 
+  HStack, 
+  Avatar,
+  AvatarFallbackText,
+  Heading,
+  Pressable,
+  FormControl,
+  FormControlLabel,
+  FormControlLabelText,
+  Switch,
+  Icon
+} from '@gluestack-ui/themed';
+import { 
+  User, 
+  Bell, 
+  LogOut, 
+  Star, 
+  Shield, 
+  Gamepad2, 
+  Receipt, 
+  Heart, 
+  HelpCircle,
+  FileText,
+  Lock,
+  ChevronRight
+} from 'lucide-react-native';
 import { getAuth } from '../config/firebase';
-const colors = require('../config/colors');
 
-const SettingsScreen = ({ onNavigateToHome }: { onNavigateToHome?: () => void; }) => {
+interface SettingsScreenProps {
+  onNavigateToHome?: () => void;
+}
+
+const SettingsScreen: React.FC<SettingsScreenProps> = ({ onNavigateToHome }) => {
   // State for toggle switches
   const [profanityFilter, setProfanityFilter] = useState(true);
   const [internetAccess, setInternetAccess] = useState(true);
@@ -73,441 +100,274 @@ const SettingsScreen = ({ onNavigateToHome }: { onNavigateToHome?: () => void; }
   };
 
   return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.headerContainer}>
-        <TouchableOpacity style={styles.headerLeftButton}>
-          <Icon name="person-circle-outline" size={28} color={colors.textPrimary} />
-        </TouchableOpacity>
+    <SafeAreaView style={{ flex: 1, backgroundColor: '#FFFFFF' }}>
+      <VStack flex={1}>
+        {/* Sticky Header */}
+        <HStack justifyContent="space-between" alignItems="center" p="$4" bg="$backgroundLight0" borderBottomWidth={0.5} borderBottomColor="$borderLight300">
+          <Pressable p="$2">
+            <Icon as={User} size="xl" color="$textDark800" />
+          </Pressable>
+          
+          <Heading size="md" color="$textDark800">Settings</Heading>
+          
+          <Pressable p="$2">
+            <Icon as={Bell} size="lg" color="$textDark800" />
+          </Pressable>
+        </HStack>
         
-        <Text style={styles.headerTitle}>Settings</Text>
-        
-        <TouchableOpacity style={styles.headerRightButton}>
-          <Icon name="notifications-outline" size={24} color={colors.textPrimary} />
-        </TouchableOpacity>
-      </View>
-      
-      <ScrollView contentContainerStyle={styles.content}>
-        {/* Profile Section */}
-        <View style={styles.section}>
-          <View style={styles.profileHeader}>
-            <View style={styles.profilePicContainer}>
-              {userData.profilePic ? (
-                <Image source={{ uri: userData.profilePic }} style={styles.profilePic} />
-              ) : (
-                <View style={styles.profilePicPlaceholder}>
-                  <Text style={styles.profilePicInitials}>
-                    {userData.name.charAt(0)}
-                  </Text>
-                </View>
-              )}
-            </View>
-            <View style={styles.profileInfo}>
-              <Text style={styles.profileName}>{userData.name}</Text>
-              <Text style={styles.profileEmail}>{userData.email}</Text>
-            </View>
-          </View>
-          <TouchableOpacity style={styles.editButton}>
-            <Text style={styles.editButtonText}>Edit Profile</Text>
-          </TouchableOpacity>
-        </View>
+        {/* Scrollable Content */}
+        <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 100, flexGrow: 1 }}>
+          {/* Profile Section */}
+          <Box bg="$backgroundLight0" borderRadius="$lg" p="$4" mb="$4">
+            <HStack alignItems="center" mb="$4">
+              <Avatar size="xl" bg="$primary500" mr="$3">
+                <AvatarFallbackText>{userData.name.split(' ').map(n => n[0]).join('')}</AvatarFallbackText>
+              </Avatar>
+              <VStack flex={1}>
+                <Heading size="sm" color="$textDark800">{userData.name}</Heading>
+                <Text size="sm" color="$textDark500">{userData.email}</Text>
+              </VStack>
+              <Button variant="outline" size="sm" borderRadius="$full" px="$4">
+                <ButtonText>Edit Profile</ButtonText>
+              </Button>
+            </HStack>
+          </Box>
 
-        {/* Safety & Parental Controls */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Safety & Parental Controls</Text>
-          
-          <View style={styles.settingItem}>
-            <View style={styles.settingInfo}>
-              <Text style={styles.settingTitle}>Profanity Filter</Text>
-              <Text style={styles.settingSubtitle}>Block inappropriate language</Text>
-            </View>
-            <Switch
-              value={profanityFilter}
-              onValueChange={setProfanityFilter}
-              trackColor={{ false: colors.surfaceLight, true: colors.primary }}
-              thumbColor={profanityFilter ? colors.textLight : colors.textTertiary}
-            />
-          </View>
-          
-          <View style={styles.settingItem}>
-            <View style={styles.settingInfo}>
-              <Text style={styles.settingTitle}>Internet Access</Text>
-              <Text style={styles.settingSubtitle}>Allow toy to access online content</Text>
-            </View>
-            <Switch
-              value={internetAccess}
-              onValueChange={setInternetAccess}
-              trackColor={{ false: colors.surfaceLight, true: colors.primary }}
-              thumbColor={internetAccess ? colors.textLight : colors.textTertiary}
-            />
-          </View>
-          
-          <View style={styles.settingItem}>
-            <View style={styles.settingInfo}>
-              <Text style={styles.settingTitle}>Daily Time Limit</Text>
-              <Text style={styles.settingSubtitle}>Maximum play time per day</Text>
-            </View>
-            <Text style={styles.timeLimit}>60 min</Text>
-          </View>
-          
-          <View style={styles.settingItem}>
-            <View style={styles.settingInfo}>
-              <Text style={styles.settingTitle}>Voice Preview</Text>
-              <Text style={styles.settingSubtitle}>Preview responses before toy speaks</Text>
-            </View>
-            <Switch
-              value={voicePreview}
-              onValueChange={setVoicePreview}
-              trackColor={{ false: colors.surfaceLight, true: colors.primary }}
-              thumbColor={voicePreview ? colors.textLight : colors.textTertiary}
-            />
-          </View>
-          
-          <View style={styles.settingItem}>
-            <View style={styles.settingInfo}>
-              <Text style={styles.settingTitle}>Data Collection</Text>
-              <Text style={styles.settingSubtitle}>Allow usage analytics for improvement</Text>
-            </View>
-            <Switch
-              value={dataCollection}
-              onValueChange={setDataCollection}
-              trackColor={{ false: colors.surfaceLight, true: colors.primary }}
-              thumbColor={dataCollection ? colors.textLight : colors.textTertiary}
-            />
-          </View>
-        </View>
+          {/* Safety & Parental Controls */}
+          <Box bg="$backgroundLight0" borderRadius="$lg" p="$4" mb="$4">
+            <HStack alignItems="center" mb="$3">
+              <Icon as={Shield} size="sm" color="$primary500" mr="$2" />
+              <Heading size="sm" color="$textDark800">Safety & Parental Controls</Heading>
+            </HStack>
+            
+            <VStack space="md">
+              <HStack justifyContent="space-between" alignItems="center" py="$3" borderBottomWidth={0.5} borderBottomColor="$borderLight300">
+                <VStack flex={1}>
+                  <FormControlLabel mb="$1">
+                    <FormControlLabelText color="$textDark800">Profanity Filter</FormControlLabelText>
+                  </FormControlLabel>
+                  <Text size="sm" color="$textDark500">Block inappropriate language</Text>
+                </VStack>
+                <Switch 
+                  isChecked={profanityFilter} 
+                  onToggle={(e) => setProfanityFilter(!!e)}
+                />
+              </HStack>
+              
+              <HStack justifyContent="space-between" alignItems="center" py="$3" borderBottomWidth={0.5} borderBottomColor="$borderLight300">
+                <VStack flex={1}>
+                  <FormControlLabel mb="$1">
+                    <FormControlLabelText color="$textDark800">Internet Access</FormControlLabelText>
+                  </FormControlLabel>
+                  <Text size="sm" color="$textDark500">Allow toy to access online content</Text>
+                </VStack>
+                <Switch 
+                  isChecked={internetAccess} 
+                  onToggle={(e) => setInternetAccess(!!e)}
+                />
+              </HStack>
+              
+              <HStack justifyContent="space-between" alignItems="center" py="$3" borderBottomWidth={0.5} borderBottomColor="$borderLight300">
+                <VStack flex={1}>
+                  <FormControlLabel mb="$1">
+                    <FormControlLabelText color="$textDark800">Daily Time Limit</FormControlLabelText>
+                  </FormControlLabel>
+                  <Text size="sm" color="$textDark500">Maximum play time per day</Text>
+                </VStack>
+                <Text size="md" fontWeight="$medium" color="$primary500">60 min</Text>
+              </HStack>
+              
+              <HStack justifyContent="space-between" alignItems="center" py="$3" borderBottomWidth={0.5} borderBottomColor="$borderLight300">
+                <VStack flex={1}>
+                  <FormControlLabel mb="$1">
+                    <FormControlLabelText color="$textDark800">Voice Preview</FormControlLabelText>
+                  </FormControlLabel>
+                  <Text size="sm" color="$textDark500">Preview responses before toy speaks</Text>
+                </VStack>
+                <Switch 
+                  isChecked={voicePreview} 
+                  onToggle={(e) => setVoicePreview(!!e)}
+                />
+              </HStack>
+              
+              <HStack justifyContent="space-between" alignItems="center" py="$3">
+                <VStack flex={1}>
+                  <FormControlLabel mb="$1">
+                    <FormControlLabelText color="$textDark800">Data Collection</FormControlLabelText>
+                  </FormControlLabel>
+                  <Text size="sm" color="$textDark500">Allow usage analytics for improvement</Text>
+                </VStack>
+                <Switch 
+                  isChecked={dataCollection} 
+                  onToggle={(e) => setDataCollection(!!e)}
+                />
+              </HStack>
+            </VStack>
+          </Box>
 
-        {/* Connected Toys */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Connected Toys</Text>
-          {connectedToys.map((toy, index) => (
-            <View key={index} style={styles.toyItem}>
-              <Text style={styles.toyId}>{toy.id}</Text>
-              <Text style={styles.toyName}>{toy.name}</Text>
-            </View>
-          ))}
-        </View>
+          {/* Connected Toys */}
+          <Box bg="$backgroundLight0" borderRadius="$lg" p="$4" mb="$4">
+            <HStack alignItems="center" mb="$3">
+              <Icon as={Gamepad2} size="sm" color="$primary500" mr="$2" />
+              <Heading size="sm" color="$textDark800">Connected Toys</Heading>
+            </HStack>
+            <VStack space="sm">
+              {connectedToys.map((toy, index) => (
+                <HStack key={index} justifyContent="space-between" alignItems="center" py="$2" px="$3" bg="$backgroundLight50" borderRadius="$md">
+                  <Text size="sm" color="$textDark800">{toy.name}</Text>
+                  <Text size="xs" color="$textDark500">{toy.id}</Text>
+                </HStack>
+              ))}
+            </VStack>
+          </Box>
 
-        {/* App Preferences */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>App Preferences</Text>
-          
-          <View style={styles.settingItem}>
-            <Text style={styles.settingTitle}>Push Notifications</Text>
-            <Switch
-              value={pushNotifications}
-              onValueChange={setPushNotifications}
-              trackColor={{ false: colors.surfaceLight, true: colors.primary }}
-              thumbColor={pushNotifications ? colors.textLight : colors.textTertiary}
-            />
-          </View>
-          
-          <View style={styles.settingItem}>
-            <Text style={styles.settingTitle}>Sound & Haptics</Text>
-            <Switch
-              value={soundHaptics}
-              onValueChange={setSoundHaptics}
-              trackColor={{ false: colors.surfaceLight, true: colors.primary }}
-              thumbColor={soundHaptics ? colors.textLight : colors.textTertiary}
-            />
-          </View>
-          
-          <TouchableOpacity style={styles.buttonItem}>
-            <Text style={styles.buttonItemText}>Rate App</Text>
-          </TouchableOpacity>
-        </View>
+          {/* App Preferences */}
+          <Box bg="$backgroundLight0" borderRadius="$lg" p="$4" mb="$4">
+            <HStack alignItems="center" mb="$3">
+              <Icon as={Heart} size="sm" color="$primary500" mr="$2" />
+              <Heading size="sm" color="$textDark800">App Preferences</Heading>
+            </HStack>
+            
+            <VStack space="md">
+              <HStack justifyContent="space-between" alignItems="center" py="$3" borderBottomWidth={0.5} borderBottomColor="$borderLight300">
+                <Text size="md" color="$textDark800">Push Notifications</Text>
+                <Switch 
+                  isChecked={pushNotifications} 
+                  onToggle={(e) => setPushNotifications(!!e)}
+                />
+              </HStack>
+              
+              <HStack justifyContent="space-between" alignItems="center" py="$3" borderBottomWidth={0.5} borderBottomColor="$borderLight300">
+                <Text size="md" color="$textDark800">Sound & Haptics</Text>
+                <Switch 
+                  isChecked={soundHaptics} 
+                  onToggle={(e) => setSoundHaptics(!!e)}
+                />
+              </HStack>
+              
+              <Pressable py="$3" borderBottomWidth={0.5} borderBottomColor="$borderLight300">
+                <HStack alignItems="center">
+                  <Icon as={Star} size="md" color="$textDark500" mr="$3" />
+                  <Text size="md" color="$textDark800">Rate App</Text>
+                </HStack>
+              </Pressable>
+            </VStack>
+          </Box>
 
-        {/* Subscription & Billing */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Subscription & Billing</Text>
-          
-          <View style={styles.subscriptionItem}>
-            <View style={styles.subscriptionInfo}>
-              <Text style={styles.subscriptionTitle}>Premium Plan</Text>
-              <Text style={styles.subscriptionStatus}>
-                {subscriptionData.active ? 'Active' : 'Inactive'}
-              </Text>
-              <Text style={styles.subscriptionBilling}>
-                Next billing: {subscriptionData.nextBilling}
-              </Text>
-            </View>
-            <View style={styles.subscriptionPrice}>
-              <Text style={styles.subscriptionAmount}>{subscriptionData.amount}</Text>
-              <Text style={styles.subscriptionPeriod}>{subscriptionData.period}</Text>
-            </View>
-          </View>
-          
-          <TouchableOpacity style={styles.buttonItem}>
-            <Text style={styles.buttonItemText}>Manage Subscription</Text>
-          </TouchableOpacity>
-          
-          <TouchableOpacity style={styles.buttonItem}>
-            <Text style={styles.buttonItemText}>Purchase History</Text>
-          </TouchableOpacity>
-        </View>
+          {/* Subscription & Billing */}
+          <Box bg="$backgroundLight0" borderRadius="$lg" p="$4" mb="$4">
+            <HStack alignItems="center" mb="$3">
+              <Icon as={Receipt} size="sm" color="$primary500" mr="$2" />
+              <Heading size="sm" color="$textDark800">Subscription & Billing</Heading>
+            </HStack>
+            
+            <Box bg="$primary500" borderRadius="$md" p="$3" mb="$3">
+              <HStack justifyContent="space-between" alignItems="center">
+                <VStack>
+                  <Text size="md" fontWeight="$medium" color="$textLight50">Premium Plan</Text>
+                  <Text size="sm" fontWeight="$medium" color="$textLight50">{subscriptionData.active ? 'Active' : 'Inactive'}</Text>
+                  <Text size="sm" color="$textLight50">Next billing: {subscriptionData.nextBilling}</Text>
+                </VStack>
+                <VStack alignItems="flex-end">
+                  <Text size="lg" fontWeight="$bold" color="$textLight50">{subscriptionData.amount}</Text>
+                  <Text size="sm" color="$textLight50">{subscriptionData.period}</Text>
+                </VStack>
+              </HStack>
+            </Box>
+            
+            <VStack space="sm">
+              <Pressable py="$3" borderBottomWidth={0.5} borderBottomColor="$borderLight300">
+                <HStack alignItems="center" justifyContent="space-between">
+                  <HStack alignItems="center">
+                    <Icon as={Receipt} size="md" color="$textDark500" mr="$3" />
+                    <Text size="md" color="$textDark800">Manage Subscription</Text>
+                  </HStack>
+                  <Icon as={ChevronRight} size="md" color="$textDark500" />
+                </HStack>
+              </Pressable>
+              
+              <Pressable py="$3">
+                <HStack alignItems="center" justifyContent="space-between">
+                  <HStack alignItems="center">
+                    <Icon as={Receipt} size="md" color="$textDark500" mr="$3" />
+                    <Text size="md" color="$textDark800">Purchase History</Text>
+                  </HStack>
+                  <Icon as={ChevronRight} size="md" color="$textDark500" />
+                </HStack>
+              </Pressable>
+            </VStack>
+          </Box>
 
-        {/* Support & Help */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Support & Help</Text>
-          
-          <TouchableOpacity style={styles.buttonItem}>
-            <Text style={styles.buttonItemText}>Help Center</Text>
-          </TouchableOpacity>
-          
-          <TouchableOpacity style={styles.buttonItem}>
-            <Text style={styles.buttonItemText}>Contact Support</Text>
-          </TouchableOpacity>
-          
-          <TouchableOpacity style={styles.buttonItem}>
-            <Text style={styles.buttonItemText}>Privacy Policy</Text>
-          </TouchableOpacity>
-          
-          <TouchableOpacity style={styles.buttonItem}>
-            <Text style={styles.buttonItemText}>Terms of Service</Text>
-          </TouchableOpacity>
-        </View>
+          {/* Support & Help */}
+          <Box bg="$backgroundLight0" borderRadius="$lg" p="$4" mb="$4">
+            <HStack alignItems="center" mb="$3">
+              <Icon as={HelpCircle} size="sm" color="$primary500" mr="$2" />
+              <Heading size="sm" color="$textDark800">Support & Help</Heading>
+            </HStack>
+            
+            <VStack space="sm">
+              <Pressable py="$3" borderBottomWidth={0.5} borderBottomColor="$borderLight300">
+                <HStack alignItems="center" justifyContent="space-between">
+                  <HStack alignItems="center">
+                    <Icon as={HelpCircle} size="md" color="$textDark500" mr="$3" />
+                    <Text size="md" color="$textDark800">Help Center</Text>
+                  </HStack>
+                  <Icon as={ChevronRight} size="md" color="$textDark500" />
+                </HStack>
+              </Pressable>
+              
+              <Pressable py="$3" borderBottomWidth={0.5} borderBottomColor="$borderLight300">
+                <HStack alignItems="center" justifyContent="space-between">
+                  <HStack alignItems="center">
+                    <Icon as={HelpCircle} size="md" color="$textDark500" mr="$3" />
+                    <Text size="md" color="$textDark800">Contact Support</Text>
+                  </HStack>
+                  <Icon as={ChevronRight} size="md" color="$textDark500" />
+                </HStack>
+              </Pressable>
+              
+              <Pressable py="$3" borderBottomWidth={0.5} borderBottomColor="$borderLight300">
+                <HStack alignItems="center" justifyContent="space-between">
+                  <HStack alignItems="center">
+                    <Icon as={Lock} size="md" color="$textDark500" mr="$3" />
+                    <Text size="md" color="$textDark800">Privacy Policy</Text>
+                  </HStack>
+                  <Icon as={ChevronRight} size="md" color="$textDark500" />
+                </HStack>
+              </Pressable>
+              
+              <Pressable py="$3">
+                <HStack alignItems="center" justifyContent="space-between">
+                  <HStack alignItems="center">
+                    <Icon as={FileText} size="md" color="$textDark500" mr="$3" />
+                    <Text size="md" color="$textDark800">Terms of Service</Text>
+                  </HStack>
+                  <Icon as={ChevronRight} size="md" color="$textDark500" />
+                </HStack>
+              </Pressable>
+            </VStack>
+          </Box>
 
-        {/* Sign Out */}
-        <View style={styles.signOutSection}>
-          <TouchableOpacity style={styles.signOutButton} onPress={handleLogout}>
-            <Text style={styles.signOutButtonText}>Sign Out</Text>
-          </TouchableOpacity>
-        </View>
-      </ScrollView>
+          {/* Sign Out */}
+          <Box mt="$4" mb="$8">
+            <Button 
+              variant="outline" 
+              action="negative" 
+              size="lg" 
+              borderRadius="$lg" 
+              borderColor="$error500"
+              onPress={handleLogout}
+            >
+              <HStack alignItems="center" space="sm">
+                <Icon as={LogOut} size="lg" color="$error500" />
+                <ButtonText color="$error500" fontWeight="$medium">Sign Out</ButtonText>
+              </HStack>
+            </Button>
+          </Box>
+        </ScrollView>
+      </VStack>
     </SafeAreaView>
   );
 };
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.background,
-  },
-  content: {
-    paddingTop: 10,
-    paddingBottom: 100,
-  },
-  section: {
-    backgroundColor: colors.surface,
-    marginHorizontal: 20,
-    marginBottom: 20,
-    borderRadius: 16,
-    padding: 16,
-    shadowColor: colors.textTertiary,
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  profileHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  profilePicContainer: {
-    marginRight: 16,
-  },
-  profilePic: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-  },
-  profilePicPlaceholder: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: colors.primary,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  profilePicInitials: {
-    fontSize: 24,
-    fontWeight: '600',
-    color: colors.textLight,
-  },
-  profileInfo: {
-    flex: 1,
-  },
-  profileName: {
-    fontSize: 20,
-    fontWeight: '600',
-    color: colors.textPrimary,
-    marginBottom: 4,
-  },
-  profileEmail: {
-    fontSize: 16,
-    color: colors.textSecondary,
-  },
-  editButton: {
-    backgroundColor: colors.primary,
-    height: 44,
-    borderRadius: 12,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  editButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: colors.textLight,
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: colors.textPrimary,
-    marginBottom: 16,
-  },
-  settingItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.surfaceLight,
-  },
-  toyItem: {
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.surfaceLight,
-  },
-  toyId: {
-    fontSize: 14,
-    color: colors.textSecondary,
-    marginBottom: 4,
-  },
-  toyName: {
-    fontSize: 16,
-    fontWeight: '500',
-    color: colors.textPrimary,
-  },
-  settingInfo: {
-    flex: 1,
-  },
-  settingTitle: {
-    fontSize: 16,
-    fontWeight: '500',
-    color: colors.textPrimary,
-    marginBottom: 4,
-  },
-  settingSubtitle: {
-    fontSize: 14,
-    color: colors.textSecondary,
-  },
-  timeLimit: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: colors.primary,
-  },
-  buttonItem: {
-    paddingVertical: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.surfaceLight,
-  },
-  buttonItemText: {
-    fontSize: 16,
-    color: colors.textPrimary,
-    fontWeight: '500',
-  },
-  subscriptionItem: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.surfaceLight,
-  },
-  subscriptionInfo: {
-    flex: 1,
-  },
-  subscriptionTitle: {
-    fontSize: 16,
-    fontWeight: '500',
-    color: colors.textPrimary,
-    marginBottom: 4,
-  },
-  subscriptionStatus: {
-    fontSize: 14,
-    color: colors.primary,
-    fontWeight: '500',
-    marginBottom: 4,
-  },
-  subscriptionBilling: {
-    fontSize: 14,
-    color: colors.textSecondary,
-  },
-  subscriptionPrice: {
-    alignItems: 'flex-end',
-  },
-  subscriptionAmount: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: colors.textPrimary,
-  },
-  subscriptionPeriod: {
-    fontSize: 14,
-    color: colors.textSecondary,
-  },
-  signOutSection: {
-    marginHorizontal: 20,
-  },
-  signOutButton: {
-    backgroundColor: colors.error,
-    height: 50,
-    borderRadius: 12,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  signOutButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: colors.textLight,
-  },
-  headerContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    backgroundColor: colors.surface,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.surfaceLight,
-  },
-  headerLeftButton: {
-    padding: 8,
-  },
-  headerRightButton: {
-    padding: 8,
-  },
-  headerCenterContent: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  headerTitle: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: colors.textPrimary,
-  },
-  headerContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  backButton: {
-    padding: 8,
-    width: 32,
-    height: 32,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  backButtonText: {
-    fontSize: 24,
-    color: colors.textPrimary,
-  },
-  headerSpacer: {
-    width: 32,
-    height: 32,
-  },
-});
 
 export default SettingsScreen;

@@ -1,20 +1,29 @@
 import React, { useState, useEffect } from 'react';
 import {
-  View,
-  Text,
-  TouchableOpacity,
-  StyleSheet,
   Animated,
-  Image,
   Dimensions,
   Easing,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-const colors = require('../config/colors');
+import { 
+  Box, 
+  Text, 
+  Button, 
+  ButtonText, 
+  VStack, 
+  Center, 
+  HStack,
+  Icon
+} from '@gluestack-ui/themed';
+import { Bluetooth, Check, ToyBrick } from 'lucide-react-native';
 
 const { width, height } = Dimensions.get('window');
 
-const OnboardingScreen = ({ onNavigateToSetup }: { onNavigateToSetup?: () => void; }) => {
+interface OnboardingScreenProps {
+  onNavigateToSetup?: () => void;
+}
+
+const OnboardingScreen: React.FC<OnboardingScreenProps> = ({ onNavigateToSetup }) => {
   const [scaleValue] = useState(new Animated.Value(0.8));
   const [opacityValue] = useState(new Animated.Value(0));
   const [bounceValue] = useState(new Animated.Value(0));
@@ -82,158 +91,91 @@ const OnboardingScreen = ({ onNavigateToSetup }: { onNavigateToSetup?: () => voi
   });
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: '#FFFFFF' }}>
       <Animated.View
         style={[
-          styles.content,
           {
+            flex: 1,
+            paddingHorizontal: 24,
+            justifyContent: 'space-between',
+            paddingBottom: 40,
             opacity: opacityValue,
             transform: [{ scale: scaleValue }],
           },
         ]}
       >
-        {/* Header with back button */}
-
-
         {/* Main content */}
-        <View style={styles.mainContent}>
-          {/* Bluetooth icon with animation */}
+        <VStack flex={1} justifyContent="center" alignItems="center" px="$5" space="lg">
+          {/* Toy connection icon with animation */}
           <Animated.View 
             style={[
-              styles.bluetoothContainer,
-              isConnected && styles.connectedBluetoothContainer,
               {
+                width: 100,
+                height: 100,
+                borderRadius: 50,
+                backgroundColor: isConnected ? '#10B981' : '$primary500', // Green when connected, primary when not
+                justifyContent: 'center',
+                alignItems: 'center',
+                marginBottom: 32,
+                shadowColor: isConnected ? '#10B981' : '$primary500',
+                shadowOffset: {
+                  width: 0,
+                  height: 8,
+                },
+                shadowOpacity: 0.2,
+                shadowRadius: 12,
+                elevation: 8,
                 transform: [{ scale: bounceInterpolate }],
+                borderWidth: isConnected ? 4 : 0,
+                borderColor: '#10B981',
               },
             ]}
           >
-            <Text style={styles.bluetoothIcon}>{isConnected ? '✓' : '📡'}</Text>
+            {isConnected ? (
+              <Icon as={Check} size="xl" color="$textLight" />
+            ) : (
+              <Icon as={ToyBrick} size="xl" color="$textLight" />
+            )}
           </Animated.View>
 
           {/* Title */}
-          <Text style={styles.title}>{isConnected ? 'Connected!' : 'Connect Your Toy'}</Text>
+          <Text fontSize="$3xl" fontWeight="$bold" color="$textDark800" textAlign="center">
+            {isConnected ? 'Connected!' : 'Connect Your Toy'}
+          </Text>
           
           {/* Subtitle */}
-          <Text style={styles.subtitle}>{isConnected ? 'Successfully Connected' : 'Ready to Connect'}</Text>
+          <Text fontSize="$lg" fontWeight="$medium" color="$primary500" textAlign="center">
+            {isConnected ? 'Successfully Connected' : 'Ready to Connect'}
+          </Text>
 
           {/* Description */}
-          <Text style={styles.description}>
+          <Text fontSize="$sm" color="$textDark500" textAlign="center" lineHeight="$lg">
             {isConnected 
               ? 'Your AI Buddy is now connected and ready to play!' 
               : 'Make sure your AI Buddy is turned on and nearby, then tap Connect.'}
           </Text>
-        </View>
+        </VStack>
 
         {/* Connect button */}
-        <View style={styles.buttonContainer}>
-          <TouchableOpacity style={styles.connectButton} onPress={handleConnect} disabled={isConnecting || isConnected}>
-            <Text style={styles.connectButtonText}>{isConnected ? 'Connected!' : isConnecting ? 'Connecting...' : 'Connect Toy'}</Text>
-          </TouchableOpacity>
-        </View>
+        <Box w="$full" mb="$5">
+          <Button 
+            bg={isConnected ? '$success500' : '$primary500'} 
+            py="$3" 
+            h="$12" 
+            borderRadius="$lg" 
+            onPress={handleConnect} 
+            disabled={isConnecting || isConnected}
+            alignItems="center"
+            justifyContent="center"
+          >
+            <ButtonText color="$white" fontWeight="$semibold" textAlign="center">
+              {isConnected ? 'Connected!' : isConnecting ? 'Connecting...' : 'Connect Toy'}
+            </ButtonText>
+          </Button>
+        </Box>
       </Animated.View>
     </SafeAreaView>
   );
 };
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.background,
-  },
-  content: {
-    flex: 1,
-    paddingHorizontal: 24,
-    justifyContent: 'space-between',
-    paddingBottom: 40,
-  },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'flex-start',
-    paddingTop: 20,
-    paddingBottom: 10,
-  },
-  backButton: {
-    padding: 8,
-  },
-  backButtonText: {
-    fontSize: 24,
-    color: colors.textPrimary,
-  },
-  mainContent: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-  },
-  bluetoothContainer: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    backgroundColor: colors.primary,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 32,
-    shadowColor: colors.primary,
-    shadowOffset: {
-      width: 0,
-      height: 8,
-    },
-    shadowOpacity: 0.2,
-    shadowRadius: 12,
-    elevation: 8,
-  },
-  bluetoothIcon: {
-    fontSize: 48,
-    color: colors.textLight,
-  },
-  title: {
-    fontSize: 32,
-    fontWeight: '700',
-    color: colors.textPrimary,
-    textAlign: 'center',
-    marginBottom: 8,
-  },
-  subtitle: {
-    fontSize: 20,
-    fontWeight: '600',
-    color: colors.secondary,
-    textAlign: 'center',
-    marginBottom: 16,
-  },
-  description: {
-    fontSize: 16,
-    color: colors.textSecondary,
-    textAlign: 'center',
-    lineHeight: 24,
-  },
-  buttonContainer: {
-    width: '100%',
-    marginBottom: 20,
-  },
-  connectButton: {
-    backgroundColor: colors.primary,
-    height: 56,
-    borderRadius: 16,
-    justifyContent: 'center',
-    alignItems: 'center',
-    shadowColor: colors.primary,
-    shadowOffset: {
-      width: 0,
-      height: 4,
-    },
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  connectButtonText: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: colors.textLight,
-  },
-  connectedBluetoothContainer: {
-    borderColor: '#10B981', // Emerald green for success state
-    borderWidth: 4,
-  },
-});
 
 export default OnboardingScreen;

@@ -1,17 +1,53 @@
 import React, { useState, useEffect } from 'react';
 import {
-  View,
-  Text,
-  TouchableOpacity,
-  StyleSheet,
+  SafeAreaView,
   ScrollView,
-  Animated,
   RefreshControl,
-  Dimensions,
-  Modal,
+  Animated
 } from 'react-native';
-import Icon from 'react-native-vector-icons/Ionicons';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { 
+  Box, 
+  Text, 
+  Button, 
+  ButtonText, 
+  VStack, 
+  HStack, 
+  Image,
+  Heading,
+  Icon,
+  Divider,
+  Card,
+  Avatar,
+  Badge,
+  BadgeText,
+  Spinner,
+  Pressable
+} from '@gluestack-ui/themed';
+import { 
+  User, 
+  Bell, 
+  Power, 
+  Settings,
+  Layers,
+  MessageSquare,
+  UserRound,
+  Shield,
+  Timer,
+  TrendingUp,
+  PlusCircle,
+  ChevronRight,
+  X,
+  Send,
+  Mic,
+  Gift,
+  Calendar,
+  BookOpen,
+  Gamepad2,
+  MessageCircle,
+  Home,
+  Store,
+  ShoppingCart
+} from 'lucide-react-native';
 
 // Import other screens for tab navigation
 import MarketplaceScreen from './MarketplaceScreen';
@@ -19,43 +55,20 @@ import CartScreen from './CartScreen';
 import SettingsScreen from './SettingsScreen';
 import ProductDetailScreen from './ProductDetailScreen';
 
-const colors = {
-  primary: '#6D8B74',
-  secondary: '#FFD166',
-  error: '#EF7C8E',
-  background: '#F8F4E9',
-  surface: '#FFFFFF',
-  surfaceLight: '#F0F0F0',
-  textPrimary: '#3C3C3C',
-  textSecondary: '#888888',
-  textTertiary: '#B0B0B0',
-  textLight: '#F8F4E9',
-};
-
-const { width } = Dimensions.get('window');
-
 interface NewHomeContentProps {
   onNavigateToHome?: () => void;
-  personalityPopupVisible: boolean;
-  setPersonalityPopupVisible: React.Dispatch<React.SetStateAction<boolean>>;
-  modePopupVisible: boolean;
-  setModePopupVisible: React.Dispatch<React.SetStateAction<boolean>>;
-  convosPopupVisible: boolean;
-  setConvosPopupVisible: React.Dispatch<React.SetStateAction<boolean>>;
-  chatPopupVisible: boolean;
-  setChatPopupVisible: React.Dispatch<React.SetStateAction<boolean>>;
+  toyDetailVisible: boolean;
+  setToyDetailVisible: React.Dispatch<React.SetStateAction<boolean>>;
+  selectedToy: any;
+  setSelectedToy: React.Dispatch<React.SetStateAction<any>>;
 }
 
 const NewHomeContent = ({ 
   onNavigateToHome, 
-  personalityPopupVisible, 
-  setPersonalityPopupVisible, 
-  modePopupVisible, 
-  setModePopupVisible, 
-  convosPopupVisible, 
-  setConvosPopupVisible, 
-  chatPopupVisible, 
-  setChatPopupVisible 
+  toyDetailVisible,
+  setToyDetailVisible,
+  selectedToy,
+  setSelectedToy
 }: NewHomeContentProps) => {
   const [refreshing, setRefreshing] = useState(false);
   const [toyStatus, setToyStatus] = useState('online');
@@ -82,17 +95,10 @@ const NewHomeContent = ({
     lastInteraction: '2 hours ago',
   };
 
-  const quickActions = [
-    { id: 'customize', title: 'Customize', subtitle: 'Personality traits', icon: 'sparkles-outline', color: colors.primary },
-    { id: 'safety', title: 'Safety', subtitle: 'Parental controls', icon: 'shield-checkmark-outline', color: colors.error },
-    { id: 'activity', title: 'Activity', subtitle: 'Recent interactions', icon: 'time-outline', color: colors.secondary },
-    { id: 'progress', title: 'Progress', subtitle: 'Track development', icon: 'trending-up-outline', color: colors.primary },
-  ];
-
   const parentalControls = [
-    { id: 'safetyMode', label: 'Safety Mode', icon: 'shield-checkmark-outline', enabled: true },
-    { id: 'screenTime', label: 'Screen Time', icon: 'timer-outline', enabled: true },
-    { id: 'contentFilter', label: 'Content Filter', icon: 'filter-outline', enabled: true },
+    { id: 'safetyMode', label: 'Safety Mode', enabled: true },
+    { id: 'screenTime', label: 'Screen Time', enabled: true },
+    { id: 'contentFilter', label: 'Content Filter', enabled: true },
   ];
 
   const [parentalControlStates, setParentalControlStates] = useState(
@@ -118,20 +124,24 @@ const NewHomeContent = ({
   if (toyStatus === 'offline') {
     return (
       <ScrollView
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={{ padding: 20, flex: 1, justifyContent: 'center' }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         showsVerticalScrollIndicator={false}
       >
-        <View style={styles.offlineCard}>
-          <View style={styles.offlineIconContainer}>
-            <Icon name="power-outline" size={48} color={colors.textTertiary} />
-          </View>
-          <Text style={styles.offlineTitle}>Buddy is offline</Text>
-          <Text style={styles.offlineSubtitle}>Connect your toy to continue</Text>
-          <TouchableOpacity style={styles.connectButton} onPress={() => setToyStatus('online')}>
-            <Text style={styles.connectButtonText}>Reconnect Toy</Text>
-          </TouchableOpacity>
-        </View>
+        <Card bg="$backgroundLight0" borderRadius="$lg" p="$6" alignItems="center" justifyContent="center" my="$4">
+          <Box bg="$backgroundLight50" borderRadius="$full" p="$4" mb="$4">
+            <Icon as={Power} size="2xl" color="$textDark500" />
+          </Box>
+          <Heading size="lg" color="$textDark800" textAlign="center" mb="$2">Buddy is offline</Heading>
+          <Text size="sm" color="$textDark500" textAlign="center" mb="$4">Connect your toy to continue</Text>
+          <Button 
+            bg="$primary500" 
+            borderRadius="$full" 
+            onPress={() => setToyStatus('online')}
+          >
+            <ButtonText color="$textLight500">Reconnect Toy</ButtonText>
+          </Button>
+        </Card>
       </ScrollView>
     );
   }
@@ -139,286 +149,266 @@ const NewHomeContent = ({
   return (
     <>
       <ScrollView
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={{ padding: 16, paddingBottom: 100 }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         showsVerticalScrollIndicator={false}
       >
         <Animated.View style={{ opacity: fadeAnim }}>
           {/* Greeting */}
-          <View style={styles.greetingSection}>
-            <Text style={styles.greeting}>Good morning, Sarah!</Text>
-            <Text style={styles.greetingSubtitle}>Welcome back</Text>
-          </View>
+          <VStack mb="$6">
+            <Text size="2xl" fontWeight="$bold" color="$textDark800">Good morning, Sarah!</Text>
+            <Text size="sm" color="$textDark500">Welcome back</Text>
+          </VStack>
 
-          {/* Toy Status Card */}
-          <View style={styles.toyCard}>
-            <View style={styles.toyHeader}>
-              <View style={styles.toyAvatar}>
-                <Text style={styles.toyAvatarText}>BB</Text>
-              </View>
-              <View style={styles.toyInfo}>
-                <Text style={styles.toyName}>{mockToyData.name}</Text>
-                <View style={styles.statusRow}>
-                  <View style={[styles.statusDot, { backgroundColor: colors.primary }]} />
-                  <Text style={styles.statusText}>Connected</Text>
-                </View>
-                <Text style={styles.lastInteraction}>Last active {mockToyData.lastInteraction}</Text>
-              </View>
-            </View>
-
-            <View style={styles.moodSection}>
-              <Text style={styles.moodLabel}>Mood</Text>
-              <Text style={styles.moodValue}>😊 Happy</Text>
-            </View>
-
-            <View style={styles.toyActionsGrid}>
-              <TouchableOpacity 
-                style={styles.toyActionCard}
-                onPress={() => setPersonalityPopupVisible(true)}
-              >
-                <Icon name="person-outline" size={20} color={colors.primary} />
-                <Text style={styles.toyActionLabel}>Personality</Text>
-              </TouchableOpacity>
+          {/* Toy Status Strip */}
+          <Pressable 
+            bg="$backgroundLight0" 
+            borderRadius="$lg" 
+            p="$4" 
+            mb="$4"
+            onPress={() => {
+              setSelectedToy(mockToyData);
+              setToyDetailVisible(true);
+            }}
+          >
+            <HStack justifyContent="space-between" alignItems="center">
+              <HStack alignItems="center">
+                <Avatar size="md" bg="$primary500" mr="$3">
+                  <Text color="$textLight50" fontWeight="$bold">BB</Text>
+                </Avatar>
+                <VStack>
+                  <Text size="lg" fontWeight="$bold" color="$textDark800">{mockToyData.name}</Text>
+                  <HStack alignItems="center">
+                    <Box w="$2" h="$2" bg="$success500" borderRadius="$full" mr="$2" />
+                    <Text size="sm" color="$textDark800">Connected</Text>
+                  </HStack>
+                  <Text size="xs" color="$textDark500">Last active {mockToyData.lastInteraction}</Text>
+                </VStack>
+              </HStack>
               
-              <TouchableOpacity 
-                style={styles.toyActionCard}
-                onPress={() => setModePopupVisible(true)}
-              >
-                <Icon name="layers-outline" size={20} color={colors.primary} />
-                <Text style={styles.toyActionLabel}>Mode</Text>
-              </TouchableOpacity>
-              
-              <TouchableOpacity 
-                style={styles.toyActionCard}
-                onPress={() => setConvosPopupVisible(true)}
-              >
-                <Icon name="chatbubbles-outline" size={20} color={colors.primary} />
-                <Text style={styles.toyActionLabel}>Convos</Text>
-              </TouchableOpacity>
-              
-              <TouchableOpacity style={styles.toyActionCard}>
-                <Icon name="settings-outline" size={20} color={colors.primary} />
-                <Text style={styles.toyActionLabel}>Settings</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
+              <VStack alignItems="flex-end">
+                <Icon as={ChevronRight} size="md" color="$textDark500" />
+              </VStack>
+            </HStack>
+          </Pressable>
 
           {/* Add New Toy */}
-          <TouchableOpacity style={styles.addToyButton}>
-            <Icon name="add-circle-outline" size={22} color={colors.primary} />
-            <Text style={styles.addToyText}>Add New Toy</Text>
-          </TouchableOpacity>
-
-          {/* Quick Actions */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Quick Actions</Text>
-            <View style={styles.quickActionsGrid}>
-              {quickActions.map((action) => (
-                <TouchableOpacity key={action.id} style={styles.quickActionCard}>
-                  <Icon name={action.icon} size={24} color={action.color} />
-                  <Text style={styles.quickActionTitle}>{action.title}</Text>
-                  <Text style={styles.quickActionSubtitle}>{action.subtitle}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          </View>
+          <Pressable 
+            bg="$backgroundLight0" 
+            borderRadius="$lg" 
+            p="$4" 
+            mb="$4"
+            borderWidth={1.5}
+            borderColor="$primary500"
+            borderStyle="dashed"
+            alignItems="center"
+            flexDirection="row"
+            justifyContent="center"
+          >
+            <Icon as={PlusCircle} size="md" color="$primary500" mr="$2" />
+            <Text size="sm" fontWeight="$medium" color="$primary500">Add New Toy</Text>
+          </Pressable>
 
           {/* Parental Controls */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Parental Controls</Text>
-            <View style={styles.controlsCard}>
+          <VStack mb="$4">
+            <Heading size="sm" mb="$3" color="$textDark800">Parental Controls</Heading>
+            <Card bg="$backgroundLight0" borderRadius="$lg" p="$3">
               {parentalControls.map((control, index) => (
-                <View 
+                <VStack 
                   key={control.id} 
-                  style={[
-                    styles.controlItem,
-                    index !== parentalControls.length - 1 && styles.controlItemBorder
-                  ]}
+                  py="$3" 
+                  borderBottomWidth={index !== parentalControls.length - 1 ? 0.5 : 0} 
+                  borderBottomColor="$borderLight300"
                 >
-                  <View style={styles.controlLeft}>
-                    <Icon name={control.icon} size={20} color={colors.textPrimary} />
-                    <Text style={styles.controlLabel}>{control.label}</Text>
-                  </View>
-                  <TouchableOpacity
-                    style={[
-                      styles.toggle,
-                      { backgroundColor: parentalControlStates[control.id] ? colors.primary : '#E0E0E0' }
-                    ]}
-                    onPress={() => toggleParentalControl(control.id)}
-                  >
-                    <View style={[
-                      styles.toggleThumb,
-                      { transform: [{ translateX: parentalControlStates[control.id] ? 18 : 0 }] }
-                    ]} />
-                  </TouchableOpacity>
-                </View>
+                  <HStack justifyContent="space-between" alignItems="center">
+                    <HStack alignItems="center">
+                      <Box mr="$3">
+                        <Icon as={Shield} size="sm" color="$textDark800" />
+                      </Box>
+                      <Text size="sm" color="$textDark800">{control.label}</Text>
+                    </HStack>
+                    <Pressable
+                      onPress={() => toggleParentalControl(control.id)}
+                      bg={parentalControlStates[control.id] ? "$primary500" : "$borderLight400"}
+                      borderRadius="$full"
+                      w="$10" 
+                      h="$5"
+                      justifyContent="center"
+                      alignItems="flex-start"
+                      px="$1"
+                    >
+                      <Box 
+                        bg="$white" 
+                        borderRadius="$full" 
+                        w="$4" 
+                        h="$4" 
+                        position="absolute"
+                        style={{ transform: [{ translateX: parentalControlStates[control.id] ? 20 : 0 }] }}
+                      />
+                    </Pressable>
+                  </HStack>
+                </VStack>
               ))}
-            </View>
-          </View>
+            </Card>
+          </VStack>
 
           {/* Recent Activity */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Recent Activity</Text>
+          <VStack>
+            <Heading size="sm" mb="$3" color="$textDark800">Recent Activity</Heading>
             {recentActivities.map((activity) => (
-              <TouchableOpacity key={activity.id} style={styles.activityCard}>
-                <View style={styles.activityIconContainer}>
-                  <Icon name={activity.icon} size={20} color={colors.primary} />
-                </View>
-                <View style={styles.activityContent}>
-                  <View style={styles.activityHeader}>
-                    <Text style={styles.activityType}>{activity.type}</Text>
-                    <Text style={styles.activityTime}>{activity.time}</Text>
-                  </View>
-                  <Text style={styles.activityDescription}>{activity.description}</Text>
-                </View>
-                <Icon name="chevron-forward" size={20} color={colors.textTertiary} />
-              </TouchableOpacity>
+              <Pressable key={activity.id} bg="$backgroundLight0" borderRadius="$lg" p="$3" mb="$2">
+                <HStack alignItems="center">
+                  <Box bg="$primary200" borderRadius="$full" w="$10" h="$10" justifyContent="center" alignItems="center" mr="$3">
+                    <Icon as={BookOpen} size="sm" color="$primary500" />
+                  </Box>
+                  <VStack flex={1}>
+                    <HStack justifyContent="space-between" mb="$1">
+                      <Text size="sm" fontWeight="$medium" color="$textDark800">{activity.type}</Text>
+                      <Text size="xs" color="$textDark500">{activity.time}</Text>
+                    </HStack>
+                    <Text size="sm" color="$textDark500">{activity.description}</Text>
+                  </VStack>
+                  <Icon as={ChevronRight} size="sm" color="$textDark500" />
+                </HStack>
+              </Pressable>
             ))}
-          </View>
-
-          <View style={styles.bottomSpacer} />
+          </VStack>
         </Animated.View>
       </ScrollView>
-      
-      {/* Modals */}
-      <Modal
-        visible={personalityPopupVisible}
-        transparent={true}
-        animationType="fade"
-        onRequestClose={() => setPersonalityPopupVisible(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <TouchableOpacity 
-            style={styles.modalBackdrop}
-            activeOpacity={1}
-            onPress={() => setPersonalityPopupVisible(false)}
-          />
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Select Personality</Text>
-            {['Friendly Helper', 'Science Explorer', 'Creative Artist', 'Storyteller', 'Smart Teacher'].map((item) => (
-              <TouchableOpacity key={item} style={styles.modalItem}>
-                <Text style={styles.modalItemText}>{item}</Text>
-              </TouchableOpacity>
-            ))}
-            <TouchableOpacity 
-              style={styles.modalButton} 
-              onPress={() => setPersonalityPopupVisible(false)}
-            >
-              <Text style={styles.modalButtonText}>Close</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
+    </>
+  );
+};
 
-      <Modal
-        visible={modePopupVisible}
-        transparent={true}
-        animationType="fade"
-        onRequestClose={() => setModePopupVisible(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <TouchableOpacity 
-            style={styles.modalBackdrop}
-            activeOpacity={1}
-            onPress={() => setModePopupVisible(false)}
-          />
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Select Mode</Text>
+const ToyDetailScreen = ({ toy, onGoBack }: { toy: any; onGoBack: () => void; }) => {
+  const [activeTab, setActiveTab] = useState('Personality');
+
+  const tabOptions = [
+    { id: 'Personality', label: 'Personality', icon: UserRound },
+    { id: 'Mode', label: 'Mode', icon: Layers },
+    { id: 'Convos', label: 'Convos', icon: MessageSquare },
+    { id: 'Settings', label: 'Settings', icon: Settings },
+  ];
+
+  const renderTabContent = () => {
+    switch (activeTab) {
+      case 'Personality':
+        return (
+          <VStack space="md">
+            <Text size="sm" color="$textDark800" mb="$2">Select a personality trait for your toy:</Text>
+            {['Friendly Helper', 'Science Explorer', 'Creative Artist', 'Storyteller', 'Smart Teacher'].map((item, index) => (
+              <Pressable key={index} bg="$backgroundLight0" borderRadius="$lg" p="$4" mb="$2" borderWidth={1} borderColor="$borderLight300">
+                <Text size="sm" color="$textDark800">{item}</Text>
+              </Pressable>
+            ))}
+          </VStack>
+        );
+      case 'Mode':
+        return (
+          <VStack space="md">
+            <Text size="sm" color="$textDark800" mb="$2">Select a mode for your toy:</Text>
             {[
               { icon: '💬', label: 'Chat Mode' },
               { icon: '🎤', label: 'Rap Mode' },
               { icon: '🤔', label: 'Debate Mode' },
               { icon: '🤗', label: 'Counselor Mode' },
               { icon: '📚', label: 'Tutor Mode' }
-            ].map((item) => (
-              <TouchableOpacity key={item.label} style={styles.modalItem}>
-                <Text style={styles.modalItemText}>{item.icon} {item.label}</Text>
-              </TouchableOpacity>
+            ].map((item, index) => (
+              <Pressable key={index} bg="$backgroundLight0" borderRadius="$lg" p="$4" mb="$2" borderWidth={1} borderColor="$borderLight300">
+                <HStack alignItems="center">
+                  <Box bg="$primary100" borderRadius="$full" w="$8" h="$8" justifyContent="center" alignItems="center" mr="$3">
+                    <Text size="sm" fontWeight="$bold" color="$primary500">{item.icon}</Text>
+                  </Box>
+                  <Text size="sm" color="$textDark800">{item.label}</Text>
+                </HStack>
+              </Pressable>
             ))}
-            <TouchableOpacity 
-              style={styles.modalButton} 
-              onPress={() => setModePopupVisible(false)}
-            >
-              <Text style={styles.modalButtonText}>Close</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
-
-      <Modal
-        visible={convosPopupVisible}
-        transparent={true}
-        animationType="fade"
-        onRequestClose={() => setConvosPopupVisible(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <TouchableOpacity 
-            style={styles.modalBackdrop}
-            activeOpacity={1}
-            onPress={() => setConvosPopupVisible(false)}
-          />
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Start Conversation</Text>
-            {['Chat', 'Voice', 'Video'].map((item) => (
-              <TouchableOpacity 
-                key={item} 
-                style={styles.modalItem}
-                onPress={() => {
-                  setConvosPopupVisible(false);
-                  if (item === 'Chat') setChatPopupVisible(true);
-                }}
-              >
-                <Text style={styles.modalItemText}>{item}</Text>
-              </TouchableOpacity>
+          </VStack>
+        );
+      case 'Convos':
+        return (
+          <VStack space="md">
+            <Text size="sm" color="$textDark800" mb="$2">Start a conversation:</Text>
+            {['Chat', 'Voice', 'Video'].map((item, index) => (
+              <Pressable key={index} bg="$backgroundLight0" borderRadius="$lg" p="$4" mb="$2" borderWidth={1} borderColor="$borderLight300">
+                <Text size="sm" color="$textDark800">{item}</Text>
+              </Pressable>
             ))}
-            <TouchableOpacity 
-              style={styles.modalButton} 
-              onPress={() => setConvosPopupVisible(false)}
-            >
-              <Text style={styles.modalButtonText}>Close</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
+          </VStack>
+        );
+      case 'Settings':
+        return (
+          <VStack space="md">
+            <Text size="sm" color="$textDark800" mb="$2">Configure toy settings:</Text>
+            {['General', 'Safety', 'Notifications', 'Connection'].map((item, index) => (
+              <Pressable key={index} bg="$backgroundLight0" borderRadius="$lg" p="$4" mb="$2" borderWidth={1} borderColor="$borderLight300">
+                <Text size="sm" color="$textDark800">{item}</Text>
+              </Pressable>
+            ))}
+          </VStack>
+        );
+      default:
+        return null;
+    }
+  };
 
-      <Modal
-        visible={chatPopupVisible}
-        transparent={true}
-        animationType="slide"
-        onRequestClose={() => setChatPopupVisible(false)}
-      >
-        <View style={styles.chatModal}>
-          <View style={styles.chatHeader}>
-            <Text style={styles.chatTitle}>Chat with Buddy</Text>
-            <TouchableOpacity onPress={() => setChatPopupVisible(false)}>
-              <Icon name="close" size={24} color={colors.textPrimary} />
-            </TouchableOpacity>
-          </View>
-          <ScrollView style={styles.chatMessages}>
-            <View style={styles.messageBubbleBot}>
-              <Text style={styles.messageText}>Hello! How can I help you today?</Text>
-            </View>
-            <View style={styles.messageBubbleUser}>
-              <Text style={[styles.messageText, { color: '#FFFFFF' }]}>Can you tell me a story?</Text>
-            </View>
-            <View style={styles.messageBubbleBot}>
-              <Text style={styles.messageText}>Of course! Once upon a time...</Text>
-            </View>
+  return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: '#FFFFFF' }}>
+      <VStack flex={1}>
+        {/* Header */}
+        <HStack justifyContent="space-between" alignItems="center" p="$4" bg="$backgroundLight0" borderBottomWidth={0.5} borderBottomColor="$borderLight300">
+          <Pressable p="$2" onPress={onGoBack} hitSlop={{top: 10, bottom: 10, left: 10, right: 10}}>
+            <Icon as={ChevronRight} size="lg" color="$textDark800" style={{ transform: [{ rotate: '180deg' }] }} />
+          </Pressable>
+          
+          <Heading size="md" color="$textDark800">{toy?.name}</Heading>
+          
+          <Pressable p="$2" onPress={() => {}}>
+            <Icon as={Settings} size="lg" color="$textDark800" />
+          </Pressable>
+        </HStack>
+
+        {/* Toy Info */}
+        <VStack p="$4" bg="$backgroundLight0" borderBottomWidth={0.5} borderBottomColor="$borderLight300">
+          <HStack alignItems="center" justifyContent="center">
+            <Avatar size="lg" bg="$primary500" mr="$3">
+              <Text color="$textLight50" fontWeight="$bold">BB</Text>
+            </Avatar>
+            <VStack alignItems="center">
+              <Text size="md" fontWeight="$bold" color="$textDark800">{toy?.name}</Text>
+              <HStack alignItems="center">
+                <Box w="$2" h="$2" bg="$success500" borderRadius="$full" mr="$2" />
+                <Text size="sm" color="$textDark800">Connected</Text>
+              </HStack>
+            </VStack>
+          </HStack>
+        </VStack>
+
+        {/* Tabs */}
+        <HStack bg="$backgroundLight0" borderBottomWidth={0.5} borderBottomColor="$borderLight300">
+          {tabOptions.map((tab) => (
+            <Pressable
+              key={tab.id}
+              flex={1}
+              p="$3"
+              alignItems="center"
+              borderBottomWidth={activeTab === tab.id ? 2 : 0}
+              borderBottomColor="$primary500"
+              onPress={() => setActiveTab(tab.id)}
+            >
+              <Icon as={tab.icon} size="sm" color={activeTab === tab.id ? "$primary500" : "$textDark500"} mb="$1" />
+              <Text size="xs" color={activeTab === tab.id ? "$primary500" : "$textDark500"}>{tab.label}</Text>
+            </Pressable>
+          ))}
+        </HStack>
+
+        {/* Tab Content */}
+        <Box p="$4" flex={1} bg="$backgroundLight50">
+          <ScrollView showsVerticalScrollIndicator={false}>
+            {renderTabContent()}
           </ScrollView>
-          <View style={styles.chatInputContainer}>
-            <TouchableOpacity style={styles.chatIconButton}>
-              <Icon name="mic-outline" size={22} color={colors.textPrimary} />
-            </TouchableOpacity>
-            <View style={styles.chatInput}>
-              <Text style={styles.chatPlaceholder}>Type a message...</Text>
-            </View>
-            <TouchableOpacity style={styles.chatIconButton}>
-              <Icon name="send" size={22} color={colors.primary} />
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
-    </>
+        </Box>
+      </VStack>
+    </SafeAreaView>
   );
 };
 
@@ -426,21 +416,21 @@ const HomeScreen = ({ onNavigateToHome }: { onNavigateToHome?: () => void; }) =>
   const [activeTab, setActiveTab] = useState('Home');
   const [isNotificationDrawerVisible, setNotificationDrawerVisible] = useState(false);
   const [detailProduct, setDetailProduct] = useState<any>(null);
+  const [toyDetailVisible, setToyDetailVisible] = useState(false);
+  const [selectedToy, setSelectedToy] = useState<any>(null);
   
-  // Popup states for home content
-  const [personalityPopupVisible, setPersonalityPopupVisible] = useState(false);
-  const [modePopupVisible, setModePopupVisible] = useState(false);
-  const [convosPopupVisible, setConvosPopupVisible] = useState(false);
-  const [chatPopupVisible, setChatPopupVisible] = useState(false);
-
   const renderTabContent = () => {
     if (detailProduct) {
       return (
         <ProductDetailScreen 
-          product={detailProduct} 
-          onGoBack={() => setDetailProduct(null)}
+          route={{ params: { product: detailProduct } }}
+          navigation={{ goBack: () => setDetailProduct(null) }}
         />
       );
+    }
+    
+    if (toyDetailVisible && selectedToy) {
+      return <ToyDetailScreen toy={selectedToy} onGoBack={() => setToyDetailVisible(false)} />;
     }
     
     switch (activeTab) {
@@ -453,32 +443,24 @@ const HomeScreen = ({ onNavigateToHome }: { onNavigateToHome?: () => void; }) =>
       default:
         return (
           <>
-            <View style={styles.header}>
-              <TouchableOpacity 
-                style={styles.headerButton} 
-                onPress={() => {}}
-              >
-                <Icon name="person-circle-outline" size={28} color={colors.textPrimary} />
-              </TouchableOpacity>
+            <HStack justifyContent="space-between" alignItems="center" p="$4" bg="$backgroundLight0" borderBottomWidth={0.5} borderBottomColor="$borderLight300">
+              <Pressable p="$2">
+                <Icon as={User} size="xl" color="$textDark800" />
+              </Pressable>
               
-              <TouchableOpacity 
-                style={styles.headerButton}
-                onPress={() => setNotificationDrawerVisible(true)}
-              >
-                <Icon name="notifications-outline" size={24} color={colors.textPrimary} />
-              </TouchableOpacity>
-            </View>
+              <Heading size="md" color="$textDark800">Home</Heading>
+              
+              <Pressable p="$2" onPress={() => setNotificationDrawerVisible(true)}>
+                <Icon as={Bell} size="lg" color="$textDark800" />
+              </Pressable>
+            </HStack>
             
             <NewHomeContent 
               onNavigateToHome={onNavigateToHome}
-              personalityPopupVisible={personalityPopupVisible}
-              setPersonalityPopupVisible={setPersonalityPopupVisible}
-              modePopupVisible={modePopupVisible}
-              setModePopupVisible={setModePopupVisible}
-              convosPopupVisible={convosPopupVisible}
-              setConvosPopupVisible={setConvosPopupVisible}
-              chatPopupVisible={chatPopupVisible}
-              setChatPopupVisible={setChatPopupVisible}
+              toyDetailVisible={toyDetailVisible}
+              setToyDetailVisible={setToyDetailVisible}
+              selectedToy={selectedToy}
+              setSelectedToy={setSelectedToy}
             />
           </>
         );
@@ -486,607 +468,37 @@ const HomeScreen = ({ onNavigateToHome }: { onNavigateToHome?: () => void; }) =>
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: '#FFFFFF' }}>
       {renderTabContent()}
       
       {/* Tab Bar - Only show when not viewing product detail */}
-      {detailProduct ? null : (
-        <View style={styles.tabBar}>
+      {detailProduct || toyDetailVisible ? null : (
+        <HStack justifyContent="space-around" alignItems="center" p="$3" bg="$backgroundLight0" borderTopWidth={0.5} borderTopColor="$borderLight300" position="absolute" bottom={0} left={0} right={0}>
           {[
-            { name: 'Home', icon: 'home-outline' },
-            { name: 'Marketplace', icon: 'storefront-outline' },
-            { name: 'Cart', icon: 'cart-outline' },
-            { name: 'Settings', icon: 'settings-outline' }
+            { name: 'Home', icon: Home },
+            { name: 'Marketplace', icon: Store },
+            { name: 'Cart', icon: ShoppingCart },
+            { name: 'Settings', icon: Settings }
           ].map((tab) => (
-            <TouchableOpacity
+            <Pressable
               key={tab.name}
-              style={styles.tabItem}
+              p="$3"
               onPress={() => setActiveTab(tab.name)}
             >
-              <Icon 
-                name={tab.icon} 
-                size={24} 
-                color={activeTab === tab.name ? colors.primary : colors.textSecondary} 
-              />
-              <Text style={[
-                styles.tabLabel,
-                activeTab === tab.name && styles.tabLabelActive
-              ]}>
-                {tab.name}
-              </Text>
-            </TouchableOpacity>
+              <VStack alignItems="center">
+                <Icon 
+                  as={tab.icon} 
+                  size="md" 
+                  color={activeTab === tab.name ? "$primary500" : "$textDark500"} 
+                />
+                <Text size="xs" mt="$1" color={activeTab === tab.name ? "$primary500" : "$textDark500"}>{tab.name}</Text>
+              </VStack>
+            </Pressable>
           ))}
-        </View>
+        </HStack>
       )}
-
-      {/* Notification Drawer */}
-      <Modal
-        visible={isNotificationDrawerVisible}
-        transparent={true}
-        animationType="slide"
-        onRequestClose={() => setNotificationDrawerVisible(false)}
-      >
-        <View style={styles.drawerOverlay}>
-          <TouchableOpacity 
-            style={styles.drawerBackdrop}
-            activeOpacity={1}
-            onPress={() => setNotificationDrawerVisible(false)}
-          />
-          <View style={styles.drawerContent}>
-            <View style={styles.drawerHeader}>
-              <Text style={styles.drawerTitle}>Notifications</Text>
-              <TouchableOpacity onPress={() => setNotificationDrawerVisible(false)}>
-                <Icon name="close" size={24} color={colors.textPrimary} />
-              </TouchableOpacity>
-            </View>
-            <ScrollView>
-              {[
-                { icon: 'notifications', color: colors.primary, title: 'New message from Buddy', subtitle: 'Buddy sent you a special message', time: '2 min ago' },
-                { icon: 'gift', color: colors.secondary, title: 'Special offer', subtitle: 'New toy available at 20% discount', time: '1 hour ago' },
-                { icon: 'calendar', color: colors.error, title: 'Reminder', subtitle: "Don't forget to update Buddy's personality", time: '3 hours ago' }
-              ].map((notif, index) => (
-                <TouchableOpacity key={index} style={styles.notificationItem}>
-                  <View style={[styles.notifIcon, { backgroundColor: `${notif.color}20` }]}>
-                    <Icon name={notif.icon} size={20} color={notif.color} />
-                  </View>
-                  <View style={styles.notifContent}>
-                    <Text style={styles.notifTitle}>{notif.title}</Text>
-                    <Text style={styles.notifSubtitle}>{notif.subtitle}</Text>
-                    <Text style={styles.notifTime}>{notif.time}</Text>
-                  </View>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
     </SafeAreaView>
   );
 };
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.background,
-  },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    backgroundColor: colors.surface,
-  },
-  headerButton: {
-    padding: 4,
-  },
-  scrollContent: {
-    padding: 20,
-    paddingBottom: 100,
-  },
-  greetingSection: {
-    marginBottom: 24,
-  },
-  greeting: {
-    fontSize: 28,
-    fontWeight: '700',
-    color: colors.textPrimary,
-    marginBottom: 4,
-  },
-  greetingSubtitle: {
-    fontSize: 15,
-    color: colors.textSecondary,
-  },
-  toyCard: {
-    backgroundColor: colors.surface,
-    borderRadius: 20,
-    padding: 20,
-    marginBottom: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-    elevation: 3,
-  },
-  toyHeader: {
-    flexDirection: 'row',
-    marginBottom: 16,
-  },
-  toyAvatar: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: colors.primary,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 16,
-  },
-  toyAvatarText: {
-    fontSize: 20,
-    fontWeight: '600',
-    color: '#FFFFFF',
-  },
-  toyInfo: {
-    flex: 1,
-    justifyContent: 'center',
-  },
-  toyName: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: colors.textPrimary,
-    marginBottom: 4,
-  },
-  statusRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 2,
-  },
-  statusDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    marginRight: 6,
-  },
-  statusText: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: colors.textPrimary,
-  },
-  lastInteraction: {
-    fontSize: 13,
-    color: colors.textSecondary,
-  },
-  moodSection: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 16,
-    paddingBottom: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.surfaceLight,
-  },
-  moodLabel: {
-    fontSize: 15,
-    color: colors.textSecondary,
-    marginRight: 8,
-  },
-  moodValue: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: colors.textPrimary,
-  },
-  toyActionsGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'space-between',
-    gap: 10,
-  },
-  toyActionCard: {
-    width: '48%',
-    paddingVertical: 16,
-    backgroundColor: colors.surfaceLight,
-    borderRadius: 12,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  toyActionLabel: {
-    fontSize: 12,
-    fontWeight: '500',
-    color: colors.textPrimary,
-    marginTop: 6,
-  },
-  addToyButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.surface,
-    borderRadius: 12,
-    paddingVertical: 14,
-    marginBottom: 24,
-    borderWidth: 1.5,
-    borderColor: colors.primary,
-    borderStyle: 'dashed',
-  },
-  addToyText: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: colors.primary,
-    marginLeft: 8,
-  },
-  section: {
-    marginBottom: 24,
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: colors.textPrimary,
-    marginBottom: 12,
-  },
-  quickActionsGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 12,
-  },
-  quickActionCard: {
-    width: (width - 52) / 2,
-    backgroundColor: colors.surface,
-    borderRadius: 16,
-    padding: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.06,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  quickActionTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: colors.textPrimary,
-    marginTop: 10,
-    marginBottom: 2,
-  },
-  quickActionSubtitle: {
-    fontSize: 13,
-    color: colors.textSecondary,
-  },
-  controlsCard: {
-    backgroundColor: colors.surface,
-    borderRadius: 16,
-    padding: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.06,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  controlItem: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 12,
-  },
-  controlItemBorder: {
-    borderBottomWidth: 1,
-    borderBottomColor: colors.surfaceLight,
-  },
-  controlLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  controlLabel: {
-    fontSize: 15,
-    color: colors.textPrimary,
-  },
-  toggle: {
-    width: 44,
-    height: 24,
-    borderRadius: 12,
-    padding: 2,
-    justifyContent: 'center',
-  },
-  toggleThumb: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: '#FFFFFF',
-  },
-  activityCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.surface,
-    borderRadius: 12,
-    padding: 14,
-    marginBottom: 10,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.04,
-    shadowRadius: 2,
-    elevation: 1,
-  },
-  activityIconContainer: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: `${colors.primary}20`,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 12,
-  },
-  activityContent: {
-    flex: 1,
-  },
-  activityHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 2,
-  },
-  activityType: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: colors.textPrimary,
-  },
-  activityTime: {
-    fontSize: 12,
-    color: colors.textTertiary,
-  },
-  activityDescription: {
-    fontSize: 13,
-    color: colors.textSecondary,
-  },
-  offlineCard: {
-    backgroundColor: colors.surface,
-    borderRadius: 20,
-    padding: 40,
-    alignItems: 'center',
-    marginTop: 40,
-  },
-  offlineIconContainer: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: colors.surfaceLight,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 20,
-  },
-  offlineTitle: {
-    fontSize: 22,
-    fontWeight: '700',
-    color: colors.textPrimary,
-    marginBottom: 8,
-  },
-  offlineSubtitle: {
-    fontSize: 15,
-    color: colors.textSecondary,
-    textAlign: 'center',
-    marginBottom: 24,
-  },
-  connectButton: {
-    backgroundColor: colors.primary,
-    paddingHorizontal: 32,
-    paddingVertical: 14,
-    borderRadius: 24,
-  },
-  connectButtonText: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#FFFFFF',
-  },
-  bottomSpacer: {
-    height: 20,
-  },
-  tabBar: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    flexDirection: 'row',
-    backgroundColor: colors.surface,
-    borderTopWidth: 1,
-    borderTopColor: colors.surfaceLight,
-    paddingVertical: 8,
-    paddingBottom: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: -2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-    elevation: 8,
-  },
-  tabItem: {
-    flex: 1,
-    alignItems: 'center',
-    paddingVertical: 4,
-  },
-  tabLabel: {
-    fontSize: 11,
-    fontWeight: '500',
-    color: colors.textSecondary,
-    marginTop: 2,
-  },
-  tabLabelActive: {
-    color: colors.primary,
-    fontWeight: '600',
-  },
-  modalOverlay: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  modalBackdrop: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-  },
-  modalContent: {
-    backgroundColor: colors.surface,
-    borderRadius: 20,
-    padding: 20,
-    width: width * 0.85,
-    maxHeight: '70%',
-  },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: colors.textPrimary,
-    marginBottom: 16,
-    textAlign: 'center',
-  },
-  modalItem: {
-    paddingVertical: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.surfaceLight,
-  },
-  modalItemText: {
-    fontSize: 15,
-    color: colors.textPrimary,
-  },
-  modalButton: {
-    marginTop: 16,
-    backgroundColor: colors.primary,
-    paddingVertical: 14,
-    borderRadius: 12,
-    alignItems: 'center',
-  },
-  modalButtonText: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#FFFFFF',
-  },
-  chatModal: {
-    flex: 1,
-    backgroundColor: colors.surface,
-    marginTop: 60,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-  },
-  chatHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.surfaceLight,
-  },
-  chatTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: colors.textPrimary,
-  },
-  chatMessages: {
-    flex: 1,
-    padding: 16,
-  },
-  messageBubbleBot: {
-    backgroundColor: colors.surfaceLight,
-    borderRadius: 16,
-    borderTopLeftRadius: 4,
-    padding: 12,
-    marginBottom: 10,
-    alignSelf: 'flex-start',
-    maxWidth: '75%',
-  },
-  messageBubbleUser: {
-    backgroundColor: colors.primary,
-    borderRadius: 16,
-    borderTopRightRadius: 4,
-    padding: 12,
-    marginBottom: 10,
-    alignSelf: 'flex-end',
-    maxWidth: '75%',
-  },
-  messageText: {
-    fontSize: 14,
-    color: colors.textPrimary,
-    lineHeight: 20,
-  },
-  chatInputContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 16,
-    borderTopWidth: 1,
-    borderTopColor: colors.surfaceLight,
-    gap: 10,
-  },
-  chatIconButton: {
-    padding: 8,
-  },
-  chatInput: {
-    flex: 1,
-    backgroundColor: colors.surfaceLight,
-    borderRadius: 20,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-  },
-  chatPlaceholder: {
-    fontSize: 14,
-    color: colors.textTertiary,
-  },
-  drawerOverlay: {
-    flex: 1,
-    justifyContent: 'flex-end',
-  },
-  drawerBackdrop: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-  },
-  drawerContent: {
-    backgroundColor: colors.surface,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    paddingBottom: 40,
-    maxHeight: '80%',
-  },
-  drawerHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.surfaceLight,
-  },
-  drawerTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: colors.textPrimary,
-  },
-  notificationItem: {
-    flexDirection: 'row',
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.surfaceLight,
-  },
-  notifIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 12,
-  },
-  notifContent: {
-    flex: 1,
-  },
-  notifTitle: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: colors.textPrimary,
-    marginBottom: 2,
-  },
-  notifSubtitle: {
-    fontSize: 13,
-    color: colors.textSecondary,
-    marginBottom: 4,
-  },
-  notifTime: {
-    fontSize: 12,
-    color: colors.textTertiary,
-  },
-});
 
 export default HomeScreen;
