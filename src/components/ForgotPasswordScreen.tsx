@@ -1,50 +1,72 @@
 import React, { useState } from 'react';
-import {
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  StyleSheet,
-  Animated,
-  KeyboardAvoidingView,
-  Platform,
-  TouchableWithoutFeedback,
-  Keyboard,
-  Alert,
-} from 'react-native';
-import Ionicons from 'react-native-vector-icons/Ionicons';
-import { SafeAreaView } from 'react-native-safe-area-context';
-const colors = require('../config/colors');
+import { Alert, Platform, Image } from 'react-native';
+import { 
+  Box, 
+  Text, 
+  Input, 
+  InputField, 
+  InputIcon, 
+  InputSlot, 
+  Button, 
+  ButtonText, 
+  ButtonSpinner, 
+  FormControl, 
+  FormControlError, 
+  FormControlErrorText, 
+  FormControlLabel, 
+  FormControlLabelText, 
+  HStack, 
+  VStack, 
+  Center, 
+  Pressable 
+} from '@gluestack-ui/themed';
+import { Mail } from 'lucide-react-native';
 
-const ForgotPasswordScreen = ({ onNavigateToLogin }: { onNavigateToLogin?: () => void; }) => {
+// Firebase imports
+import { getAuth } from '../config/firebase';
+import { sendPasswordResetEmail } from '@react-native-firebase/auth';
+
+interface ForgotPasswordScreenProps {
+  onNavigateToLogin?: () => void;
+}
+
+const ForgotPasswordScreen: React.FC<ForgotPasswordScreenProps> = ({ 
+  onNavigateToLogin 
+}) => {
   const [email, setEmail] = useState('');
-  const [isFocused, setIsFocused] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [emailError, setEmailError] = useState('');
+  const [errors, setErrors] = useState({
+    email: '',
+  });
 
   const validateEmail = (email: string) => {
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     return emailRegex.test(email);
   };
 
-  const handleResetPassword = () => {
+  const handleResetPassword = async () => {
+    let newErrors = {
+      email: '',
+    };
     let hasError = false;
 
+    // Validate email
     if (!email.trim()) {
-      setEmailError('Email is required');
+      newErrors.email = 'Email is required';
       hasError = true;
     } else if (!validateEmail(email)) {
-      setEmailError('Please enter a valid email address');
+      newErrors.email = 'Please enter a valid email address';
       hasError = true;
-    } else {
-      setEmailError('');
     }
+
+    setErrors(newErrors);
 
     if (!hasError) {
       setIsLoading(true);
-      // Simulate API call to Firebase
-      setTimeout(() => {
-        setIsLoading(false);
+      try {
+        // Firebase password reset email
+        await sendPasswordResetEmail(getAuth(), email);
+        
         Alert.alert(
           'Password Reset Email Sent',
           `We've sent a password reset link to ${email}. Please check your inbox.`,
@@ -52,261 +74,118 @@ const ForgotPasswordScreen = ({ onNavigateToLogin }: { onNavigateToLogin?: () =>
             {
               text: 'OK',
               onPress: () => {
-                // In a real app, navigate back to login screen
-                console.log('Navigate back to login');
+                // Navigate back to login screen
+                if (onNavigateToLogin) {
+                  onNavigateToLogin();
+                }
               }
             }
           ]
         );
-      }, 1500);
+      } catch (error: any) {
+        console.error('Password reset error:', error);
+        
+        let errorMessage = 'Unable to send password reset email. Please try again.';
+        
+        // Handle specific Firebase error codes
+        if (error.code === 'auth/user-not-found') {
+          errorMessage = 'No account found with this email address.';
+        } else if (error.code === 'auth/invalid-email') {
+          errorMessage = 'Please enter a valid email address.';
+        } else if (error.code === 'auth/network-request-failed') {
+          errorMessage = 'Network error. Please check your connection and try again.';
+        }
+        
+        Alert.alert('Password Reset Failed', errorMessage);
+      } finally {
+        setIsLoading(false);
+      }
+    }
+  };
+
+  const handleGoToLogin = () => {
+    if (onNavigateToLogin) {
+      onNavigateToLogin();
     }
   };
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-    >
-      <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-        <SafeAreaView style={styles.safeArea}>
-          {/* Header */}
-          <View style={styles.header}>
-            <Text style={styles.title}>Reset Password</Text>
-            <Text style={styles.subtitle}>
-              Enter your email and we'll send you a link to reset your password
-            </Text>
-            <View style={styles.logoContainer}>
-              <View style={styles.logoCircle}>
-                <View style={styles.logoInnerCircle}>
-                  <Text style={styles.logoIcon}>🔒</Text>
-                </View>
-              </View>
-            </View>
-          </View>
+    <Box flex={1} bg="$backgroundLight0" p="$4" justifyContent="center">
+      <Center mb="$8">
+        <Image 
+          source={require('../public/logo.png')} 
+          alt="Logo"
+          style={{ width: 80, height: 80, marginBottom: 16 }}
+        />
+        <Text fontSize="$xl" fontWeight="$bold" color="$textDark800" mb="$2">
+          Reset Password
+        </Text>
+        <Text fontSize="$sm" color="$textDark500" textAlign="center">
+          Enter your email and we'll send you a link to reset your password
+        </Text>
+      </Center>
 
-          {/* Form */}
-          <View style={styles.formContainer}>
-            {/* Email Input */}
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>Email</Text>
-              <View
-                style={[
-                  styles.inputContainer,
-                  isFocused && styles.inputContainerFocused,
-                  emailError ? styles.inputContainerError : null,
-                ]}
-              >
-                <TextInput
-                  style={styles.input}
-                  value={email}
-                  onChangeText={setEmail}
-                  placeholder="Enter your email"
-                  placeholderTextColor={colors.textTertiary}
-                  onFocus={() => setIsFocused(true)}
-                  onBlur={() => setIsFocused(false)}
-                  keyboardType="email-address"
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                />
-              </View>
-              {emailError ? <Text style={styles.errorText}>{emailError}</Text> : null}
-            </View>
+      <VStack space="lg" mb="$6">
+        {/* Email Input */}
+        <FormControl isInvalid={!!errors.email}>
+          <FormControlLabel mb="$2">
+            <FormControlLabelText color="$textDark800">Email</FormControlLabelText>
+          </FormControlLabel>
+          <Input borderColor="$borderLight300" borderWidth="$1" borderRadius="$lg" bg="$backgroundLight0" h="$12" py="$3">
+            <InputSlot pl="$3">
+              <InputIcon as={Mail} color="$textDark800" />
+            </InputSlot>
+            <InputField 
+              placeholder="Enter your email" 
+              placeholderTextColor="$textDark500"
+              color="$textDark800"
+              value={email}
+              onChangeText={setEmail}
+              keyboardType="email-address"
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+          </Input>
+          <FormControlError>
+            <FormControlErrorText>{errors.email}</FormControlErrorText>
+          </FormControlError>
+        </FormControl>
 
-            {/* Reset Button */}
-            <TouchableOpacity 
-              style={[styles.resetButton, isLoading && styles.resetButtonDisabled]} 
-              onPress={handleResetPassword}
-              disabled={isLoading}
-            >
-              {isLoading ? (
-                <View style={styles.loadingContainer}>
-                  <View style={styles.loadingSpinner} />
-                  <Text style={styles.resetButtonText}>Sending...</Text>
-                </View>
-              ) : (
-                <Text style={styles.resetButtonText}>Send Reset Link</Text>
-              )}
-            </TouchableOpacity>
+        {/* Reset Password Button */}
+        <Button 
+          bg="$primary500" 
+          py="$3" 
+          h="$12" 
+          borderRadius="$lg" 
+          onPress={handleResetPassword} 
+          disabled={isLoading}
+          alignItems="center"
+          justifyContent="center"
+        >
+          {isLoading ? (
+            <>
+              <ButtonSpinner mr="$2" color="$white" />
+              <ButtonText color="$white" fontWeight="$semibold" textAlign="center">
+                Sending...
+              </ButtonText>
+            </>
+          ) : (
+            <ButtonText color="$white" fontWeight="$semibold" textAlign="center">
+              Send Reset Link
+            </ButtonText>
+          )}
+        </Button>
 
-            {/* Back to Login */}
-            <View style={styles.backToLoginContainer}>
-              <Text style={styles.backToLoginText}>Remember your password? </Text>
-              <TouchableOpacity 
-                onPress={() => {
-                  if (onNavigateToLogin) {
-                    onNavigateToLogin();
-                  }
-                }}
-              >
-                <Text style={styles.backToLoginLink}>Back to Login</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </SafeAreaView>
-      </TouchableWithoutFeedback>
-    </KeyboardAvoidingView>
+        {/* Back to Login */}
+        <HStack justifyContent="center" alignItems="center" mt="$4">
+          <Text color="$textDark500">Remember your password? </Text>
+          <Pressable onPress={handleGoToLogin}>
+            <Text color="$primary500" fontWeight="$medium">Back to Login</Text>
+          </Pressable>
+        </HStack>
+      </VStack>
+    </Box>
   );
 };
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.background,
-  },
-  safeArea: {
-    flex: 1,
-  },
-  header: {
-    paddingHorizontal: 24,
-    paddingTop: 30,
-    paddingBottom: 20,
-    alignItems: 'center',
-  },
-  logoContainer: {
-    marginBottom: 24,
-    marginTop: 32,
-  },
-  logoCircle: {
-    width: 96,
-    height: 96,
-    borderRadius: 48,
-    backgroundColor: colors.primary,
-    justifyContent: 'center',
-    alignItems: 'center',
-    shadowColor: colors.primary,
-    shadowOffset: {
-      width: 0,
-      height: 8,
-    },
-    shadowOpacity: 0.2,
-    shadowRadius: 12,
-    elevation: 8,
-  },
-  logoInnerCircle: {
-    width: 84,
-    height: 84,
-    borderRadius: 42,
-    backgroundColor: colors.backgroundLight,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  logoIcon: {
-    fontSize: 40,
-    textAlign: 'center',
-  },
-  title: {
-    fontSize: 28,
-    fontWeight: '700',
-    color: colors.textPrimary,
-    textAlign: 'center',
-    marginBottom: 8,
-  },
-  subtitle: {
-    fontSize: 16,
-    color: colors.textSecondary,
-    textAlign: 'center',
-    lineHeight: 24,
-    paddingHorizontal: 20,
-  },
-  formContainer: {
-    flex: 1,
-    paddingHorizontal: 24,
-    justifyContent: 'center',
-  },
-  inputGroup: {
-    marginBottom: 24,
-  },
-  label: {
-    fontSize: 16,
-    fontWeight: '500',
-    color: colors.textPrimary,
-    marginBottom: 8,
-  },
-  inputContainer: {
-    height: 56,
-    borderWidth: 2,
-    borderColor: colors.surfaceLight,
-    borderRadius: 16,
-    backgroundColor: colors.surface,
-    paddingHorizontal: 16,
-    justifyContent: 'center',
-    shadowColor: colors.textTertiary,
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  inputContainerFocused: {
-    borderColor: colors.primary,
-  },
-  inputContainerError: {
-    borderColor: colors.error,
-  },
-  input: {
-    fontSize: 16,
-    color: colors.textPrimary,
-    height: '100%',
-  },
-  errorText: {
-    fontSize: 14,
-    color: colors.error,
-    marginTop: 8,
-    marginLeft: 4,
-  },
-  resetButton: {
-    backgroundColor: colors.primary,
-    height: 56,
-    borderRadius: 16,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 24,
-    shadowColor: colors.primary,
-    shadowOffset: {
-      width: 0,
-      height: 4,
-    },
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  resetButtonDisabled: {
-    backgroundColor: colors.textTertiary,
-  },
-  loadingContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  loadingSpinner: {
-    width: 16,
-    height: 16,
-    borderRadius: 8,
-    backgroundColor: colors.textLight,
-    marginRight: 10,
-    opacity: 0.8,
-  },
-  resetButtonText: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: colors.textLight,
-  },
-  backToLoginContainer: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  backToLoginText: {
-    fontSize: 16,
-    color: colors.textSecondary,
-  },
-  backToLoginLink: {
-    fontSize: 16,
-    color: colors.primary,
-    fontWeight: '600',
-  },
-});
 
 export default ForgotPasswordScreen;

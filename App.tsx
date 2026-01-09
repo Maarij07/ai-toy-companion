@@ -18,7 +18,7 @@ import './src/config/firebase';
 import { getAuth } from './src/config/firebase';
 
 import SplashScreen from './src/components/SplashScreen';
-import GlueStackLoginScreen from './src/components/GlueStackLoginScreen';
+import LoginScreen from './src/components/LoginScreen';
 import SignupScreen from './src/components/SignupScreen';
 import ForgotPasswordScreen from './src/components/ForgotPasswordScreen';
 import OnboardingScreen from './src/components/OnboardingScreen';
@@ -92,7 +92,7 @@ function App() {
         return <HomeScreen onNavigateToHome={() => setCurrentScreen('home')} />;
       case 'login':
       default:
-        return <GlueStackLoginScreen 
+        return <LoginScreen 
           onNavigateToSignup={navigateToSignup} 
           onNavigateToForgotPassword={navigateToForgotPassword} 
           onNavigateToHome={navigateToHome}

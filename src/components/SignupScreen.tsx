@@ -1,53 +1,65 @@
 import React, { useState } from 'react';
-import {
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  StyleSheet,
-  Animated,
-  KeyboardAvoidingView,
-  Platform,
-  TouchableWithoutFeedback,
-  Keyboard,
-  Alert,
-  Image,
-  ScrollView,
-} from 'react-native';
+import { Alert, Platform, Image, ScrollView } from 'react-native';
+import { 
+  Box, 
+  Text, 
+  Input, 
+  InputField, 
+  InputIcon, 
+  InputSlot, 
+  Button, 
+  ButtonText, 
+  ButtonSpinner, 
+  FormControl, 
+  FormControlError, 
+  FormControlErrorText, 
+  FormControlLabel, 
+  FormControlLabelText, 
+  HStack, 
+  VStack, 
+  Center, 
+  Pressable 
+} from '@gluestack-ui/themed';
+import { User, Mail, Lock, Eye, EyeOff } from 'lucide-react-native';
+import { GoogleSignin } from '@react-native-google-signin/google-signin';
 import Ionicons from 'react-native-vector-icons/Ionicons';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import TermsModal from './TermsModal';
-import PrivacyModal from './PrivacyModal';
-const colors = require('../config/colors');
 
 // Firebase imports
 import { getAuth, firestore } from '../config/firebase';
-import { setDoc, doc, getDoc } from '@react-native-firebase/firestore';
-import { GoogleSignin } from '@react-native-google-signin/google-signin';
+import { setDoc, doc } from '@react-native-firebase/firestore';
 import authModule from '@react-native-firebase/auth';
 
-const SignupScreen = ({ onNavigateToLogin, onNavigateToOnboarding }: { onNavigateToLogin?: () => void; onNavigateToOnboarding?: () => void; }) => {
+// Firebase error service
+import { processFirebaseError } from '../services/FirebaseErrorService';
+
+// Modal components
+import TermsModal from './TermsModal';
+import PrivacyModal from './PrivacyModal';
+
+interface SignupScreenProps {
+  onNavigateToLogin?: () => void;
+  onNavigateToOnboarding?: () => void;
+}
+
+const SignupScreen: React.FC<SignupScreenProps> = ({ 
+  onNavigateToLogin, 
+  onNavigateToOnboarding 
+}) => {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
-  const [isFocused, setIsFocused] = useState({
-    name: false,
-    email: false,
-    password: false,
-    confirmPassword: false,
-  });
   const [isLoading, setIsLoading] = useState(false);
-  const [showTermsModal, setShowTermsModal] = useState(false);
-  const [showPrivacyModal, setShowPrivacyModal] = useState(false);
   const [errors, setErrors] = useState({
     name: '',
     email: '',
     password: '',
     confirmPassword: '',
   });
+  const [showTermsModal, setShowTermsModal] = useState(false);
+  const [showPrivacyModal, setShowPrivacyModal] = useState(false);
 
   const validateEmail = (email: string) => {
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -58,24 +70,6 @@ const SignupScreen = ({ onNavigateToLogin, onNavigateToOnboarding }: { onNavigat
     // At least 8 characters, 1 uppercase, 1 lowercase, 1 number
     const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)[a-zA-Z\d@$!%*?&]{8,}$/;
     return passwordRegex.test(password);
-  };
-
-  const handleFocus = (field: string) => {
-    setIsFocused({
-      name: field === 'name',
-      email: field === 'email',
-      password: field === 'password',
-      confirmPassword: field === 'confirmPassword',
-    });
-  };
-
-  const handleBlur = () => {
-    setIsFocused({
-      name: false,
-      email: false,
-      password: false,
-      confirmPassword: false,
-    });
   };
 
   const handleSignup = async () => {
@@ -150,17 +144,9 @@ const SignupScreen = ({ onNavigateToLogin, onNavigateToOnboarding }: { onNavigat
       } catch (error: any) {
         console.error('Signup error:', error);
         
-        // Map Firebase error codes to user-friendly messages
-        const errorMessages: { [key: string]: string } = {
-          'auth/email-already-in-use': 'This email is already registered. Please use a different email.',
-          'auth/weak-password': 'Password is not strong enough. Please use a stronger password.',
-          'auth/invalid-email': 'Please enter a valid email address.',
-          'auth/operation-not-allowed': 'Sign up is currently unavailable. Please try again later.',
-          'auth/network-request-failed': 'Network error. Please check your connection and try again.',
-        };
-        
-        const friendlyMessage = errorMessages[error.code] || 'Unable to create account. Please try again.';
-        Alert.alert('Sign Up Failed', friendlyMessage);
+        // Process the error using our error service
+        const errorMessage = processFirebaseError(error);
+        Alert.alert('Sign Up Failed', errorMessage);
       } finally {
         setIsLoading(false);
       }
@@ -173,7 +159,7 @@ const SignupScreen = ({ onNavigateToLogin, onNavigateToOnboarding }: { onNavigat
       
       // Configure Google Sign-In
       await GoogleSignin.configure({
-        webClientId: "708825188624-aba1l7jag9b5omnok4mhme8gft97sg7q.apps.googleusercontent.com", // Your actual Google Web Client ID from google-services.json
+        webClientId: "708825188624-aba1l7jag9b5omnok4mhme8gft97sg7q.apps.googleusercontent.com",
       });
       
       // Check if Google Play Services is available
@@ -190,7 +176,7 @@ const SignupScreen = ({ onNavigateToLogin, onNavigateToOnboarding }: { onNavigat
         throw new Error('No ID token received from Google');
       }
       
-      // Create Firebase credential using react-native-firebase
+      // Create Firebase credential
       const auth = getAuth();
       const credential = authModule.GoogleAuthProvider.credential(idToken);
       
@@ -217,484 +203,260 @@ const SignupScreen = ({ onNavigateToLogin, onNavigateToOnboarding }: { onNavigat
     } catch (error: any) {
       console.error('Google signup error:', error);
       
-      // Map Google error codes to user-friendly messages
-      const errorMessages: { [key: string]: string } = {
-        '-1': 'Google Sign-Up was cancelled.',
-        '12500': 'Google Play Services error. Please check your Google Play Services installation.',
-        '12501': 'Sign-up cancelled or no credentials available.',
-        'NETWORK_ERROR': 'Network error. Please check your connection and try again.',
-      };
-      
-      const friendlyMessage = errorMessages[error.code?.toString()] || 'Unable to sign up with Google. Please try again.';
-      Alert.alert('Google Sign Up Failed', friendlyMessage);
+      // Process the error using our error service
+      const errorMessage = processFirebaseError(error);
+      Alert.alert('Google Sign Up Failed', errorMessage);
     } finally {
       setIsLoading(false);
     }
   };
 
+  const handleGoToLogin = () => {
+    if (onNavigateToLogin) {
+      onNavigateToLogin();
+    }
+  };
+
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-    >
-      <SafeAreaView style={styles.safeArea}>
-        <ScrollView 
-          contentContainerStyle={styles.scrollContent}
-          keyboardShouldPersistTaps="handled"
-        >
-          <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-            <View style={styles.innerContainer}>
-              {/* Header */}
-              <View style={styles.header}>
-                <Text style={styles.title}>Create Account</Text>
-                <Text style={styles.subtitle}>
-                  Join AI Toy Companion to get started
+    <Box flex={1} bg="$backgroundLight0">
+      <ScrollView 
+        contentContainerStyle={{ flexGrow: 1 }}
+        keyboardShouldPersistTaps="handled"
+      >
+        <Box p="$4" justifyContent="center" flex={1}>
+          <Center mb="$8">
+            <Image 
+              source={require('../public/logo.png')} 
+              alt="Logo"
+              style={{ width: 80, height: 80, marginBottom: 16 }}
+            />
+            <Text fontSize="$xl" fontWeight="$bold" color="$textDark800" mb="$2">
+              Create Account
+            </Text>
+            <Text fontSize="$sm" color="$textDark500" textAlign="center">
+              Join AI Toy Companion to get started
+            </Text>
+          </Center>
+
+          <VStack space="lg" mb="$6">
+            {/* Name Input */}
+            <FormControl isInvalid={!!errors.name}>
+              <FormControlLabel mb="$2">
+                <FormControlLabelText color="$textDark800">Full Name</FormControlLabelText>
+              </FormControlLabel>
+              <Input borderColor="$borderLight300" borderWidth="$1" borderRadius="$lg" bg="$backgroundLight0" h="$12" py="$3">
+                <InputSlot pl="$3">
+                  <InputIcon as={User} color="$textDark800" />
+                </InputSlot>
+                <InputField 
+                  placeholder="Enter your full name" 
+                  placeholderTextColor="$textDark500"
+                  color="$textDark800"
+                  value={name}
+                  onChangeText={setName}
+                  autoCapitalize="words"
+                  autoCorrect={false}
+                />
+              </Input>
+              <FormControlError>
+                <FormControlErrorText>{errors.name}</FormControlErrorText>
+              </FormControlError>
+            </FormControl>
+
+            {/* Email Input */}
+            <FormControl isInvalid={!!errors.email}>
+              <FormControlLabel mb="$2">
+                <FormControlLabelText color="$textDark800">Email</FormControlLabelText>
+              </FormControlLabel>
+              <Input borderColor="$borderLight300" borderWidth="$1" borderRadius="$lg" bg="$backgroundLight0" h="$12" py="$3">
+                <InputSlot pl="$3">
+                  <InputIcon as={Mail} color="$textDark800" />
+                </InputSlot>
+                <InputField 
+                  placeholder="Enter your email" 
+                  placeholderTextColor="$textDark500"
+                  color="$textDark800"
+                  value={email}
+                  onChangeText={setEmail}
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+              </Input>
+              <FormControlError>
+                <FormControlErrorText>{errors.email}</FormControlErrorText>
+              </FormControlError>
+            </FormControl>
+
+            {/* Password Input */}
+            <FormControl isInvalid={!!errors.password}>
+              <FormControlLabel mb="$2">
+                <FormControlLabelText color="$textDark800">Password</FormControlLabelText>
+              </FormControlLabel>
+              <Input borderColor="$borderLight300" borderWidth="$1" borderRadius="$lg" bg="$backgroundLight0" h="$12" py="$3">
+                <InputSlot pl="$3">
+                  <InputIcon as={Lock} color="$textDark800" />
+                </InputSlot>
+                <InputField 
+                  placeholder="Enter your password" 
+                  placeholderTextColor="$textDark500"
+                  color="$textDark800"
+                  value={password}
+                  onChangeText={setPassword}
+                  secureTextEntry={!showPassword}
+                  autoCapitalize="none"
+                />
+                <InputSlot pr="$3">
+                  <Pressable onPress={() => setShowPassword(!showPassword)}>
+                    <InputIcon as={showPassword ? EyeOff : Eye} color="$textDark800" />
+                  </Pressable>
+                </InputSlot>
+              </Input>
+              <FormControlError>
+                <FormControlErrorText>{errors.password}</FormControlErrorText>
+              </FormControlError>
+            </FormControl>
+
+            {/* Confirm Password Input */}
+            <FormControl isInvalid={!!errors.confirmPassword}>
+              <FormControlLabel mb="$2">
+                <FormControlLabelText color="$textDark800">Confirm Password</FormControlLabelText>
+              </FormControlLabel>
+              <Input borderColor="$borderLight300" borderWidth="$1" borderRadius="$lg" bg="$backgroundLight0" h="$12" py="$3">
+                <InputSlot pl="$3">
+                  <InputIcon as={Lock} color="$textDark800" />
+                </InputSlot>
+                <InputField 
+                  placeholder="Confirm your password" 
+                  placeholderTextColor="$textDark500"
+                  color="$textDark800"
+                  value={confirmPassword}
+                  onChangeText={setConfirmPassword}
+                  secureTextEntry={!showConfirmPassword}
+                  autoCapitalize="none"
+                />
+                <InputSlot pr="$3">
+                  <Pressable onPress={() => setShowConfirmPassword(!showConfirmPassword)}>
+                    <InputIcon as={showConfirmPassword ? EyeOff : Eye} color="$textDark800" />
+                  </Pressable>
+                </InputSlot>
+              </Input>
+              <FormControlError>
+                <FormControlErrorText>{errors.confirmPassword}</FormControlErrorText>
+              </FormControlError>
+            </FormControl>
+
+            {/* Signup Button */}
+            <Button 
+              bg="$primary500" 
+              py="$3" 
+              h="$12" 
+              borderRadius="$lg" 
+              onPress={handleSignup} 
+              disabled={isLoading}
+              alignItems="center"
+              justifyContent="center"
+            >
+              {isLoading ? (
+                <>
+                  <ButtonSpinner mr="$2" color="$white" />
+                  <ButtonText color="$white" fontWeight="$semibold" textAlign="center">
+                    Creating...
+                  </ButtonText>
+                </>
+              ) : (
+                <ButtonText color="$white" fontWeight="$semibold" textAlign="center">
+                  Create Account
+                </ButtonText>
+              )}
+            </Button>
+
+            {/* Terms and Conditions */}
+            <HStack justifyContent="center" alignItems="center" flexWrap="wrap" mt="$2">
+              <Text color="$textDark500" textAlign="center" fontSize="$xs">
+                By creating an account, you agree to our{' '}
+              </Text>
+              <Pressable onPress={() => setShowTermsModal(true)}>
+                <Text color="$primary500" textAlign="center" fontSize="$xs" fontWeight="$medium">
+                  Terms of Service
                 </Text>
-              </View>
+              </Pressable>
+              <Text color="$textDark500" textAlign="center" fontSize="$xs">
+                {' '}and{' '}
+              </Text>
+              <Pressable onPress={() => setShowPrivacyModal(true)}>
+                <Text color="$primary500" textAlign="center" fontSize="$xs" fontWeight="$medium">
+                  Privacy Policy
+                </Text>
+              </Pressable>
+            </HStack>
 
-              {/* Form */}
-              <View style={styles.formContainer}>
-                {/* Name Input */}
-                <View style={styles.inputGroup}>
-                  <Text style={styles.label}>Full Name</Text>
-                  <View
-                    style={[
-                      styles.inputContainer,
-                      isFocused.name && styles.inputContainerFocused,
-                      errors.name ? styles.inputContainerError : null,
-                    ]}
-                  >
-                    <TextInput
-                      style={styles.input}
-                      value={name}
-                      onChangeText={setName}
-                      placeholder="Enter your full name"
-                      placeholderTextColor={colors.textTertiary}
-                      onFocus={() => handleFocus('name')}
-                      onBlur={handleBlur}
-                      autoCapitalize="words"
-                      autoCorrect={false}
-                    />
-                  </View>
-                  {errors.name ? <Text style={styles.errorText}>{errors.name}</Text> : null}
-                </View>
+            {/* Back to Login */}
+            <HStack justifyContent="center" alignItems="center" mt="$4">
+              <Text color="$textDark500">Already have an account? </Text>
+              <Pressable onPress={handleGoToLogin}>
+                <Text color="$primary500" fontWeight="$medium">Sign In</Text>
+              </Pressable>
+            </HStack>
 
-                {/* Email Input */}
-                <View style={styles.inputGroup}>
-                  <Text style={styles.label}>Email</Text>
-                  <View
-                    style={[
-                      styles.inputContainer,
-                      isFocused.email && styles.inputContainerFocused,
-                      errors.email ? styles.inputContainerError : null,
-                    ]}
-                  >
-                    <TextInput
-                      style={styles.input}
-                      value={email}
-                      onChangeText={setEmail}
-                      placeholder="Enter your email"
-                      placeholderTextColor={colors.textTertiary}
-                      onFocus={() => handleFocus('email')}
-                      onBlur={handleBlur}
-                      keyboardType="email-address"
-                      autoCapitalize="none"
-                      autoCorrect={false}
-                    />
-                  </View>
-                  {errors.email ? <Text style={styles.errorText}>{errors.email}</Text> : null}
-                </View>
+            {/* Divider */}
+            <HStack alignItems="center" justifyContent="center" my="$6">
+              <Box flex={1} h="$0.5" bg="$borderLight300" />
+              <Text mx="$4" color="$textDark500">OR</Text>
+              <Box flex={1} h="$0.5" bg="$borderLight300" />
+            </HStack>
 
-                {/* Password Input */}
-                <View style={styles.inputGroup}>
-                  <Text style={styles.label}>Password</Text>
-                  <View
-                    style={[
-                      styles.inputContainer,
-                      isFocused.password && styles.inputContainerFocused,
-                      errors.password ? styles.inputContainerError : null,
-                    ]}
-                  >
-                    <TextInput
-                      style={styles.input}
-                      value={password}
-                      onChangeText={setPassword}
-                      placeholder="Enter your password"
-                      placeholderTextColor={colors.textTertiary}
-                      onFocus={() => handleFocus('password')}
-                      onBlur={handleBlur}
-                      secureTextEntry={!showPassword}
-                      autoCapitalize="none"
-                    />
-                    <TouchableOpacity
-                      style={styles.eyeButton}
-                      onPress={() => setShowPassword(!showPassword)}
-                    >
-                      <Ionicons 
-                        name={showPassword ? 'eye' : 'eye-off'} 
-                        size={24} 
-                        color={colors.primary} 
-                      />
-                    </TouchableOpacity>
-                  </View>
-                  {errors.password ? <Text style={styles.errorText}>{errors.password}</Text> : null}
-                </View>
-
-                {/* Confirm Password Input */}
-                <View style={styles.inputGroup}>
-                  <Text style={styles.label}>Confirm Password</Text>
-                  <View
-                    style={[
-                      styles.inputContainer,
-                      isFocused.confirmPassword && styles.inputContainerFocused,
-                      errors.confirmPassword ? styles.inputContainerError : null,
-                    ]}
-                  >
-                    <TextInput
-                      style={styles.input}
-                      value={confirmPassword}
-                      onChangeText={setConfirmPassword}
-                      placeholder="Confirm your password"
-                      placeholderTextColor={colors.textTertiary}
-                      onFocus={() => handleFocus('confirmPassword')}
-                      onBlur={handleBlur}
-                      secureTextEntry={!showConfirmPassword}
-                      autoCapitalize="none"
-                    />
-                    <TouchableOpacity
-                      style={styles.eyeButton}
-                      onPress={() => setShowConfirmPassword(!showConfirmPassword)}
-                    >
-                      <Ionicons 
-                        name={showConfirmPassword ? 'eye' : 'eye-off'} 
-                        size={24} 
-                        color={colors.primary} 
-                      />
-                    </TouchableOpacity>
-                  </View>
-                  {errors.confirmPassword ? <Text style={styles.errorText}>{errors.confirmPassword}</Text> : null}
-                </View>
-
-                {/* Signup Button */}
-                <TouchableOpacity 
-                  style={[styles.signupButton, isLoading && styles.signupButtonDisabled]} 
-                  onPress={handleSignup}
-                  disabled={isLoading}
-                >
-                  {isLoading ? (
-                    <View style={styles.loadingContainer}>
-                      <View style={styles.loadingSpinner} />
-                      <Text style={styles.signupButtonText}>Creating...</Text>
-                    </View>
-                  ) : (
-                    <Text style={styles.signupButtonText}>Create Account</Text>
-                  )}
-                </TouchableOpacity>
-
-                {/* Terms and Conditions */}
-                <View style={styles.termsContainer}>
-                  <Text style={styles.termsText}>
-                    By creating an account, you agree to our{' '}
-                  </Text>
-                  <TouchableOpacity onPress={() => setShowTermsModal(true)}>
-                    <Text style={styles.termsLink}>Terms of Service</Text>
-                  </TouchableOpacity>
-                  <Text style={styles.termsText}> and </Text>
-                  <TouchableOpacity onPress={() => setShowPrivacyModal(true)}>
-                    <Text style={styles.termsLink}>Privacy Policy</Text>
-                  </TouchableOpacity>
-                </View>
-                
-                <TermsModal 
-                  visible={showTermsModal} 
-                  onClose={() => setShowTermsModal(false)} 
-                />
-                <PrivacyModal 
-                  visible={showPrivacyModal} 
-                  onClose={() => setShowPrivacyModal(false)} 
-                />
-
-                {/* Back to Login */}
-                <View style={styles.backToLoginContainer}>
-                  <Text style={styles.backToLoginText}>Already have an account? </Text>
-                  <TouchableOpacity 
-                    onPress={() => {
-                      if (onNavigateToLogin) {
-                        onNavigateToLogin();
-                      }
-                    }}
-                  >
-                    <Text style={styles.backToLoginLink}>Sign In</Text>
-                  </TouchableOpacity>
-                </View>
-
-                {/* Divider */}
-                <View style={styles.dividerContainer}>
-                  <View style={styles.dividerLine} />
-                  <Text style={styles.dividerText}>OR</Text>
-                  <View style={styles.dividerLine} />
-                </View>
-
-                {/* Social Login Buttons */}
-                <View style={styles.socialLoginContainerVerticalPadding}>
-                  <View style={styles.socialLoginContainer}>
-                    <TouchableOpacity style={styles.socialButton}>
-                      <View style={styles.socialButtonContent}>
-                        <Ionicons name="logo-google" size={24} color="#4285F4" style={styles.googleIcon} />
-                        <Text style={styles.socialButtonText}>Continue with Google</Text>
-                      </View>
-                    </TouchableOpacity>
-                    
-                    {/* Apple button only shows on iOS */}
-                    {Platform.OS === 'ios' && (
-                      <TouchableOpacity style={styles.socialButton}>
-                        <Text style={styles.socialButtonText}>Continue with Apple</Text>
-                      </TouchableOpacity>
-                    )}
-                  </View>
-                </View>
-              </View>
-            </View>
-          </TouchableWithoutFeedback>
-        </ScrollView>
-      </SafeAreaView>
-    </KeyboardAvoidingView>
+            {/* Social Login Buttons */}
+            <VStack space="md">
+              <Button 
+                variant="outline" 
+                borderColor="$borderLight300" 
+                bg="$backgroundLight0"
+                px="$4"
+                py="$3" 
+                h="$12" 
+                onPress={handleGoogleSignup} 
+                disabled={isLoading}
+                alignItems="center"
+                justifyContent="center"
+              >
+                <HStack alignItems="center" justifyContent="center" space="sm">
+                  <Ionicons name="logo-google" size={24} color="#4285F4" />
+                  <ButtonText>
+                    Continue with Google
+                  </ButtonText>
+                </HStack>
+              </Button>
+              
+              {/* Apple button only shows on iOS */}
+              {Platform.OS === 'ios' && (
+                <Button variant="outline" borderColor="$borderLight300" bg="$backgroundLight0" px="$4" py="$3" h="$12" alignItems="center" justifyContent="center">
+                  <HStack alignItems="center" justifyContent="center" space="sm">
+                    <Ionicons name="logo-apple" size={24} color="#000000" />
+                    <ButtonText>
+                      Continue with Apple
+                    </ButtonText>
+                  </HStack>
+                </Button>
+              )}
+            </VStack>
+          </VStack>
+        </Box>
+      </ScrollView>
+      
+      {/* Terms Modal */}
+      <TermsModal 
+        visible={showTermsModal} 
+        onClose={() => setShowTermsModal(false)} 
+      />
+      
+      {/* Privacy Modal */}
+      <PrivacyModal 
+        visible={showPrivacyModal} 
+        onClose={() => setShowPrivacyModal(false)} 
+      />
+    </Box>
   );
 };
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.background,
-  },
-  safeArea: {
-    flex: 1,
-  },
-  header: {
-    paddingHorizontal: 24,
-    paddingTop: 30,
-    paddingBottom: 20,
-    alignItems: 'center',
-  },
-  backButton: {
-    position: 'absolute',
-    top: 10,
-    left: 24,
-    zIndex: 1,
-    padding: 8,
-  },
-  backButtonText: {
-    fontSize: 24,
-    color: colors.textPrimary,
-  },
-  title: {
-    fontSize: 28,
-    fontWeight: '700',
-    color: colors.textPrimary,
-    textAlign: 'center',
-    marginBottom: 8,
-  },
-  subtitle: {
-    fontSize: 16,
-    color: colors.textSecondary,
-    textAlign: 'center',
-    lineHeight: 24,
-    paddingHorizontal: 20,
-  },
-  formContainer: {
-    flex: 1,
-    paddingHorizontal: 24,
-    justifyContent: 'center',
-  },
-  inputGroup: {
-    marginBottom: 24,
-  },
-  label: {
-    fontSize: 16,
-    fontWeight: '500',
-    color: colors.textPrimary,
-    marginBottom: 8,
-  },
-  inputContainer: {
-    height: 56,
-    borderWidth: 2,
-    borderColor: colors.surfaceLight,
-    borderRadius: 16,
-    backgroundColor: colors.surface,
-    paddingHorizontal: 16,
-    justifyContent: 'center',
-    shadowColor: colors.textTertiary,
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  inputContainerFocused: {
-    borderColor: colors.primary,
-  },
-  inputContainerError: {
-    borderColor: colors.error,
-  },
-  input: {
-    fontSize: 16,
-    color: colors.textPrimary,
-    height: '100%',
-    paddingRight: 40, // Make space for eye icon
-  },
-  eyeButton: {
-    position: 'absolute',
-    right: 16,
-    padding: 8,
-  },
-
-  errorText: {
-    fontSize: 14,
-    color: colors.error,
-    marginTop: 8,
-    marginLeft: 4,
-  },
-  signupButton: {
-    backgroundColor: colors.primary,
-    height: 56,
-    borderRadius: 16,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 20,
-    shadowColor: colors.primary,
-    shadowOffset: {
-      width: 0,
-      height: 4,
-    },
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  signupButtonDisabled: {
-    backgroundColor: colors.textTertiary,
-  },
-  loadingContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  loadingSpinner: {
-    width: 16,
-    height: 16,
-    borderRadius: 8,
-    backgroundColor: colors.textLight,
-    marginRight: 10,
-    opacity: 0.8,
-  },
-  signupButtonText: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: colors.textLight,
-  },
-  termsContainer: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 20,
-  },
-  termsText: {
-    fontSize: 14,
-    color: colors.textSecondary,
-    textAlign: 'center',
-  },
-  termsLink: {
-    fontSize: 14,
-    color: colors.primary,
-    fontWeight: '500',
-  },
-  backToLoginContainer: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  backToLoginText: {
-    fontSize: 16,
-    color: colors.textSecondary,
-  },
-  backToLoginLink: {
-    fontSize: 16,
-    color: colors.primary,
-    fontWeight: '600',
-  },
-  dividerContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginVertical: 20,
-  },
-  dividerLine: {
-    flex: 1,
-    height: 1,
-    backgroundColor: colors.surfaceLight,
-  },
-  dividerText: {
-    marginHorizontal: 16,
-    fontSize: 14,
-    color: colors.textSecondary,
-  },
-  socialLoginContainer: {
-    width: '100%',
-    alignItems: 'center',
-  },
-  socialButton: {
-    width: '100%',
-    height: 56,
-    borderWidth: 1,
-    borderColor: colors.surfaceLight,
-    borderRadius: 16,
-    justifyContent: 'center',
-    alignItems: 'center',
-    flexDirection: 'row',
-    marginBottom: 12,
-    backgroundColor: colors.surface,
-    shadowColor: colors.textTertiary,
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  socialButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: colors.textPrimary,
-    marginLeft: 8,
-  },
-  socialButtonContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  googleIcon: {
-    marginRight: 12,
-  },
-  scrollContent: {
-    flexGrow: 1,
-    justifyContent: 'center',
-  },
-  innerContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    paddingTop: 40,
-    paddingHorizontal: 24,
-  },
-  socialLoginContainerPadding: {
-    paddingBottom: 40,
-  },
-  socialContainerWithPadding: {
-    paddingHorizontal: 24,
-  },
-  socialLoginContainerVerticalPadding: {
-    paddingBottom: 40,
-  },
-});
 
 export default SignupScreen;

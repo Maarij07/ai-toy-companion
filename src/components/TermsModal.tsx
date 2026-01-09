@@ -7,7 +7,12 @@ import {
   StyleSheet,
   ScrollView,
 } from 'react-native';
-const colors = require('../config/colors');
+import { 
+  Box, 
+  Button, 
+  ButtonText,
+  Heading
+} from '@gluestack-ui/themed';
 
 interface TermsModalProps {
   visible: boolean;
@@ -25,7 +30,7 @@ const TermsModal: React.FC<TermsModalProps> = ({ visible, onClose }) => {
       <View style={styles.modalContainer}>
         <View style={styles.modalContent}>
           <View style={styles.header}>
-            <Text style={styles.title}>Terms & Conditions</Text>
+            <Heading size="lg" color="$textDark800">Terms & Conditions</Heading>
             <TouchableOpacity style={styles.closeButton} onPress={onClose}>
               <Text style={styles.closeButtonText}>✕</Text>
             </TouchableOpacity>
@@ -72,10 +77,6 @@ const TermsModal: React.FC<TermsModalProps> = ({ visible, onClose }) => {
               If you have any questions about these terms, please contact us at support@aitoycompanion.com
             </Text>
           </ScrollView>
-          
-          <TouchableOpacity style={styles.agreeButton} onPress={onClose}>
-            <Text style={styles.agreeButtonText}>I Agree</Text>
-          </TouchableOpacity>
         </View>
       </View>
     </Modal>
@@ -93,17 +94,10 @@ const styles = StyleSheet.create({
   modalContent: {
     width: '100%',
     maxWidth: 500,
-    backgroundColor: colors.surface,
+    backgroundColor: '#FFFFFF',
     borderRadius: 16,
     maxHeight: '80%',
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 12,
-    },
-    shadowOpacity: 0.25,
-    shadowRadius: 16.0,
-    elevation: 24,
+    justifyContent: 'flex-start',
   },
   header: {
     flexDirection: 'row',
@@ -111,19 +105,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 20,
     borderBottomWidth: 1,
-    borderBottomColor: colors.surfaceLight,
-  },
-  title: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: colors.textPrimary,
-  },
-  closeButton: {
-    padding: 8,
-  },
-  closeButtonText: {
-    fontSize: 20,
-    color: colors.textSecondary,
+    borderBottomColor: '#E5E5E5',
   },
   content: {
     padding: 20,
@@ -132,27 +114,22 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 16,
     fontWeight: '600',
-    color: colors.textPrimary,
+    color: '#3C3C3C',
     marginTop: 16,
     marginBottom: 8,
   },
   paragraph: {
     fontSize: 14,
-    color: colors.textSecondary,
+    color: '#6B6B6B',
     lineHeight: 22,
     marginBottom: 12,
   },
-  agreeButton: {
-    backgroundColor: colors.primary,
-    padding: 16,
-    alignItems: 'center',
-    margin: 20,
-    borderRadius: 12,
+  closeButton: {
+    padding: 8,
   },
-  agreeButtonText: {
-    color: colors.textLight,
-    fontSize: 16,
-    fontWeight: '600',
+  closeButtonText: {
+    fontSize: 20,
+    color: '#6B6B6B',
   },
 });
 

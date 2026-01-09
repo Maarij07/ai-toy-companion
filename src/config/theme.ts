@@ -138,9 +138,17 @@ const customTokens = {
     textLight900: colors.textLight,
     textLight950: colors.textLight,
     // Semantic colors
-    error500: colors.error,
-    error600: colors.error,
-    error700: colors.error,
+    error50: '#FEF7EE',
+    error100: '#FDE8D0',
+    error200: '#FBD8B4',
+    error300: '#F8B97A',
+    error400: '#F5985E',
+    error500: '#F27742',
+    error600: '#EF6431',
+    error700: '#DC582A',
+    error800: '#C84D24',
+    error900: '#B5431D',
+    error950: '#993618',
     warning500: colors.warning,
     info500: colors.info,
     success500: colors.success,
@@ -168,11 +176,36 @@ const customComponents = {
       h: '$12',
     },
     defaultProps: {
-      bg: '$primary500',
-      _text: { color: '$white', fontWeight: '$medium' },
+      variant: 'solid',
     },
     theme: {
       ...defaultConfig.components.Button.theme,
+      variants: {
+        ...defaultConfig.components.Button.theme.variants,
+        solid: {
+          bg: '$primary500',
+          _text: {
+            color: '$white',
+            fontWeight: '$medium',
+            fontSize: '$lg',
+            lineHeight: '$md',
+            alignSelf: 'center',
+            textAlignVertical: 'center',
+            overflow: 'visible',
+          },
+        },
+        outline: {
+          _text: {
+            color: '$textDark800',
+            fontWeight: '$medium',
+            fontSize: '$lg',
+            lineHeight: '$md',
+            alignSelf: 'center',
+            textAlignVertical: 'center',
+            overflow: 'visible',
+          },
+        },
+      },
     }
   },
   Input: {
