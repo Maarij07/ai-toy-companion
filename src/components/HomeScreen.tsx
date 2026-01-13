@@ -3,7 +3,8 @@ import {
   SafeAreaView,
   ScrollView,
   RefreshControl,
-  Animated
+  Animated,
+  StatusBar,
 } from 'react-native';
 import { 
   Box, 
@@ -15,12 +16,8 @@ import {
   Image,
   Heading,
   Icon,
-  Divider,
   Card,
   Avatar,
-  Badge,
-  BadgeText,
-  Spinner,
   Pressable
 } from '@gluestack-ui/themed';
 import { 
@@ -32,14 +29,8 @@ import {
   MessageSquare,
   UserRound,
   Shield,
-  Timer,
-  TrendingUp,
   PlusCircle,
   ChevronRight,
-  X,
-  Send,
-  Mic,
-  Gift,
   Calendar,
   BookOpen,
   Gamepad2,

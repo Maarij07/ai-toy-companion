@@ -14,12 +14,7 @@ import {
   Image,
   Heading,
   Icon,
-  Divider,
-  Card,
-  Avatar,
-  Badge,
-  BadgeText,
-  Spinner
+  Card
 } from '@gluestack-ui/themed';
 import { 
   User, 

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Alert, Platform, Image } from 'react-native';
+import { Alert, Image } from 'react-native';
 import { 
   Box, 
   Text, 
@@ -21,10 +21,6 @@ import {
   Pressable 
 } from '@gluestack-ui/themed';
 import { Mail } from 'lucide-react-native';
-
-// Firebase imports
-import { getAuth } from '../config/firebase';
-import { sendPasswordResetEmail } from '@react-native-firebase/auth';
 
 interface ForgotPasswordScreenProps {
   onNavigateToLogin?: () => void;
@@ -64,8 +60,11 @@ const ForgotPasswordScreen: React.FC<ForgotPasswordScreenProps> = ({
     if (!hasError) {
       setIsLoading(true);
       try {
-        // Firebase password reset email
-        await sendPasswordResetEmail(getAuth(), email);
+        // Simulate password reset email sending
+        console.log('Sending password reset to:', email);
+        
+        // Simulate API call delay
+        await new Promise(resolve => setTimeout(resolve, 1000));
         
         Alert.alert(
           'Password Reset Email Sent',
@@ -85,18 +84,7 @@ const ForgotPasswordScreen: React.FC<ForgotPasswordScreenProps> = ({
       } catch (error: any) {
         console.error('Password reset error:', error);
         
-        let errorMessage = 'Unable to send password reset email. Please try again.';
-        
-        // Handle specific Firebase error codes
-        if (error.code === 'auth/user-not-found') {
-          errorMessage = 'No account found with this email address.';
-        } else if (error.code === 'auth/invalid-email') {
-          errorMessage = 'Please enter a valid email address.';
-        } else if (error.code === 'auth/network-request-failed') {
-          errorMessage = 'Network error. Please check your connection and try again.';
-        }
-        
-        Alert.alert('Password Reset Failed', errorMessage);
+        Alert.alert('Password Reset Failed', 'Unable to send password reset email. Please try again.');
       } finally {
         setIsLoading(false);
       }

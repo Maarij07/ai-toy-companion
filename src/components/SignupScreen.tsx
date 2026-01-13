@@ -24,13 +24,6 @@ import { User, Mail, Lock, Eye, EyeOff } from 'lucide-react-native';
 import { GoogleSignin } from '@react-native-google-signin/google-signin';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 
-// Firebase imports
-import { getAuth } from '../config/firebase';
-import { setDoc, doc, getFirestore } from '@react-native-firebase/firestore';
-import authModule from '@react-native-firebase/auth';
-
-// Firebase error service
-import { processFirebaseError } from '../services/FirebaseErrorService';
 
 // Modal components
 import TermsModal from './TermsModal';
@@ -127,42 +120,19 @@ const SignupScreen: React.FC<SignupScreenProps> = ({
       setIsLoading(true);
       
       try {
-        // Create user with Firebase Authentication
-        const userCredential = await getAuth().createUserWithEmailAndPassword(email, password);
-        const user = userCredential.user;
+        // Simulate user creation
+        console.log('Creating user with name:', name, 'and email:', email);
         
-        // Store additional user data in Firestore
-        await setDoc(doc(getFirestore(), 'users', user.uid), {
-          name: name.trim(),
-          email: email.toLowerCase(),
-          createdAt: new Date(),
-          profileComplete: false,
-        });
+        // Simulate API call delay
+        await new Promise(resolve => setTimeout(resolve, 1000));
         
-        console.log('User created successfully:', user.uid);
-        
-        // Navigate to onboarding screen after successful signup
+        // Navigate to onboarding screen after successful "signup"
         if (onNavigateToOnboarding) {
           onNavigateToOnboarding();
         }
       } catch (error: any) {
         console.error('Signup error:', error);
-        
-        // Get the current auth state before attempting cleanup
-        const authInstance = getAuth();
-        const currentUserId = authInstance.currentUser?.uid;
-        
-        // If user was created but Firestore operation failed, sign out the user
-        try {
-          await authInstance.signOut();
-          console.log('User signed out due to signup failure');
-        } catch (signOutError) {
-          console.error('Error signing out after failed registration:', signOutError);
-        }
-        
-        // Process the error using our error service
-        const errorMessage = processFirebaseError(error);
-        Alert.alert('Sign Up Failed', errorMessage);
+        Alert.alert('Sign Up Failed', 'Failed to create account. Please try again.');
       } finally {
         setIsLoading(false);
       }
@@ -186,42 +156,23 @@ const SignupScreen: React.FC<SignupScreenProps> = ({
       const idToken = response.data?.idToken;
       const userName = response.data?.user?.name;
       const userEmail = response.data?.user?.email;
-      const userPhoto = response.data?.user?.photo;
       
       if (!idToken) {
         throw new Error('No ID token received from Google');
       }
       
-      // Create Firebase credential
-      const auth = getAuth();
-      const credential = authModule.GoogleAuthProvider.credential(idToken);
+      console.log('Google signup successful:', userEmail || userName);
       
-      // Sign in to Firebase with the Google credential
-      const userCredential = await auth.signInWithCredential(credential);
-      const firebaseUser = userCredential.user;
+      // Simulate API call delay
+      await new Promise(resolve => setTimeout(resolve, 1000));
       
-      console.log('Google signup successful:', firebaseUser.uid);
-      
-      // Create Firestore document for new user
-      await setDoc(doc(getFirestore(), 'users', firebaseUser.uid), {
-        name: userName || '',
-        email: userEmail || firebaseUser.email || '',
-        photoURL: userPhoto || '',
-        createdAt: new Date(),
-        profileComplete: false,
-        authProvider: 'google',
-      });
-      
-      // Navigate to onboarding screen after successful signup
+      // Navigate to onboarding screen after successful "signup"
       if (onNavigateToOnboarding) {
         onNavigateToOnboarding();
       }
     } catch (error: any) {
       console.error('Google signup error:', error);
-      
-      // Process the error using our error service
-      const errorMessage = processFirebaseError(error);
-      Alert.alert('Google Sign Up Failed', errorMessage);
+      Alert.alert('Google Sign Up Failed', 'Failed to sign up with Google. Please try again.');
     } finally {
       setIsLoading(false);
     }

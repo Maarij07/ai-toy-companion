@@ -13,9 +13,7 @@ import { useState, useEffect } from 'react';
 import { GluestackUIProvider } from '@gluestack-ui/themed';
 import customConfig from './src/config/theme';
 
-// Firebase initialization MUST be first
-import './src/config/firebase';
-import { getAuth } from './src/config/firebase';
+
 
 import SplashScreen from './src/components/SplashScreen';
 import LoginScreen from './src/components/LoginScreen';
@@ -33,25 +31,26 @@ function App() {
   const [currentScreen, setCurrentScreen] = useState<'login' | 'signup' | 'forgot' | 'onboarding' | 'setup' | 'home'>('login');
   
   useEffect(() => {
-    // Check if user is already logged in
-    const unsubscribe = getAuth().onAuthStateChanged(user => {
-      if (user) {
-        setCurrentScreen('home');
-      } else {
+    // Simulate app initialization
+    const initApp = async () => {
+      // Show splash screen while initializing
+      const splashTimer = setTimeout(() => {
+        setShowSplash(false);
+      }, 3000);
+      
+      // Simulate initialization
+      setTimeout(() => {
+        setIsInitializing(false);
+        // Default to login screen
         setCurrentScreen('login');
-      }
-      setIsInitializing(false);
-    });
-
-    // Show splash screen while initializing
-    const splashTimer = setTimeout(() => {
-      setShowSplash(false);
-    }, 3000);
-    
-    return () => {
-      clearTimeout(splashTimer);
-      unsubscribe();
+      }, 1000);
+      
+      return () => {
+        clearTimeout(splashTimer);
+      };
     };
+    
+    initApp();
   }, []);
 
   const navigateToSignup = () => {

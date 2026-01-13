@@ -24,13 +24,6 @@ import { Mail, Lock, Eye, EyeOff } from 'lucide-react-native';
 import { GoogleSignin } from '@react-native-google-signin/google-signin';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 
-// Firebase error service
-import { processFirebaseError } from '../services/FirebaseErrorService';
-
-// Firebase imports
-import { getAuth, firestore } from '../config/firebase';
-import { updateDoc, doc, getDoc, setDoc } from '@react-native-firebase/firestore';
-import authModule from '@react-native-firebase/auth';
 
 interface LoginScreenProps {
   onNavigateToSignup?: () => void;
@@ -89,30 +82,22 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
     if (!hasError) {
       setIsLoading(true);
       try {
-        // Firebase email/password authentication
-        const userCredential = await getAuth().signInWithEmailAndPassword(email, password);
-        const user = userCredential.user;
-        console.log('Login successful:', user.uid);
+        // Simulate login process
+        console.log('Attempting login with email:', email);
         
-        // Update last login timestamp in Firestore
-        try {
-          await updateDoc(doc(firestore, 'users', user.uid), {
-            lastLoginAt: new Date(),
-          });
-        } catch (err) {
-          console.warn('Could not update last login timestamp:', err);
-        }
+        // Simulate API call delay
+        await new Promise(resolve => setTimeout(resolve, 1000));
         
-        // Navigate to home screen after successful login
+        // For demo purposes, accept any email/password combination
+        // In a real app without DB, you might have other validation
+        
+        // Navigate to home screen after successful "login"
         if (onNavigateToHome) {
           onNavigateToHome();
         }
       } catch (error: any) {
         console.error('Login error:', error);
-        
-        // Process the error using our error service
-        const errorMessage = processFirebaseError(error);
-        setLoginError(errorMessage);
+        setLoginError('Login failed. Please try again.');
       } finally {
         setIsLoading(false);
       }
@@ -155,48 +140,18 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
         throw new Error('No ID token received from Google');
       }
       
-      // Create Firebase credential
-      const auth = getAuth();
-      const credential = authModule.GoogleAuthProvider.credential(idToken);
+      console.log('Google login successful:', userEmail || userName);
       
-      // Sign in to Firebase with the Google credential
-      const userCredential = await auth.signInWithCredential(credential);
-      const firebaseUser = userCredential.user;
+      // Simulate API call delay
+      await new Promise(resolve => setTimeout(resolve, 1000));
       
-      console.log('Google login successful:', firebaseUser.uid);
-      
-      // Check if user exists in Firestore
-      const userDocRef = doc(firestore, 'users', firebaseUser.uid);
-      const userDocSnap = await getDoc(userDocRef);
-      
-      if (!userDocSnap.exists()) {
-        // New user - create Firestore document
-        await setDoc(userDocRef, {
-          name: userName || '',
-          email: userEmail || firebaseUser.email || '',
-          photoURL: userPhoto || '',
-          createdAt: new Date(),
-          lastLoginAt: new Date(),
-          profileComplete: false,
-          authProvider: 'google',
-        });
-      } else {
-        // Existing user - update last login
-        await updateDoc(userDocRef, {
-          lastLoginAt: new Date(),
-        });
-      }
-      
-      // Navigate to home screen after successful login
+      // Navigate to home screen after successful "login"
       if (onNavigateToHome) {
         onNavigateToHome();
       }
     } catch (error: any) {
       console.error('Google login error:', error);
-      
-      // Process the error using our error service
-      const errorMessage = processFirebaseError(error);
-      setLoginError(errorMessage);
+      setLoginError('Google login failed. Please try again.');
     } finally {
       setIsLoading(false);
     }

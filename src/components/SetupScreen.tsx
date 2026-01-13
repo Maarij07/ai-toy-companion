@@ -33,10 +33,6 @@ import {
 } from '@gluestack-ui/themed';
 import { User, ToyBrick, Star, Sparkles, Plus, Minus } from 'lucide-react-native';
 
-// Firebase imports
-import { getAuth } from '../config/firebase';
-import { doc, getFirestore, setDoc, getDoc } from '@react-native-firebase/firestore';
-
 interface Owner {
   name: string;
   age: string;
@@ -55,7 +51,7 @@ const SetupScreen: React.FC<SetupScreenProps> = ({ onNavigateToHome }) => {
     toyName: '',
     owners: [{ name: '', age: '' }],
   });
-  const [isLoading, setIsLoading] = useState(false);
+
 
   const interests = [
     'Creative Arts',
@@ -142,49 +138,21 @@ const SetupScreen: React.FC<SetupScreenProps> = ({ onNavigateToHome }) => {
 
   const handleCompleteSetup = async () => {
     if (validateInputs()) {
-      setIsLoading(true);
       try {
-        // Get the current user
-        const auth = getAuth();
-        const currentUser = auth.currentUser;
+        // Create toy data object
+        const toyData = {
+          name: toyName.trim(),
+          owners: owners,
+          interests: selectedInterests,
+          customPersonality: customPrompt,
+          createdAt: new Date(),
+          connected: true,
+        };
         
-        if (currentUser) {
-          // Create toy data object
-          const toyData = {
-            name: toyName.trim(),
-            owners: owners,
-            interests: selectedInterests,
-            customPersonality: customPrompt,
-            createdAt: new Date(),
-            connected: true,
-          };
-          
-          // Get the current user document
-          const userDocRef = doc(getFirestore(), 'users', currentUser.uid);
-          const userDoc = await getDoc(userDocRef);
-          
-          if (userDoc.exists()) {
-            // Get existing toys array or initialize as empty array
-            const userData = userDoc.data() as any;
-            const existingToys = userData.toys || [];
-            
-            // Add the new toy to the array
-            const updatedToys = [...existingToys, toyData];
-            
-            // Update the user document with the new toys array
-            await setDoc(userDocRef, {
-              ...userData,
-              toys: updatedToys,
-            }, { merge: true });
-          } else {
-            // If user doc doesn't exist, create it with the toy
-            await setDoc(userDocRef, {
-              toys: [toyData],
-            });
-          }
-          
-          console.log('Toy setup completed and saved:', toyData);
-        }
+        console.log('Toy setup completed and saved:', toyData);
+        
+        // Simulate API call delay
+        await new Promise(resolve => setTimeout(resolve, 1000));
         
         // Navigate to home screen
         if (onNavigateToHome) {
@@ -193,8 +161,6 @@ const SetupScreen: React.FC<SetupScreenProps> = ({ onNavigateToHome }) => {
       } catch (error) {
         console.error('Error saving toy data:', error);
         // Optionally show an error message to the user
-      } finally {
-        setIsLoading(false);
       }
     }
   };

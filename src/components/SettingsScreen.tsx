@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import {
   ScrollView,
   Alert,
-  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { 
@@ -16,9 +15,6 @@ import {
   AvatarFallbackText,
   Heading,
   Pressable,
-  FormControl,
-  FormControlLabel,
-  FormControlLabelText,
   Switch,
   Icon
 } from '@gluestack-ui/themed';
@@ -36,7 +32,6 @@ import {
   Lock,
   ChevronRight
 } from 'lucide-react-native';
-import { getAuth } from '../config/firebase';
 
 interface SettingsScreenProps {
   onNavigateToHome?: () => void;
@@ -85,8 +80,9 @@ const SettingsScreen: React.FC<SettingsScreenProps> = ({ onNavigateToHome }) => 
           text: 'Sign Out',
           onPress: async () => {
             try {
-              await getAuth().signOut();
-              // App.tsx will automatically navigate to login on auth state change
+              // Simulate logout
+              console.log('User logged out');
+              // In a real app without DB, you might clear local storage/session
             } catch (error: any) {
               console.error('Logout error:', error);
               Alert.alert('Error', 'Failed to sign out. Please try again.');

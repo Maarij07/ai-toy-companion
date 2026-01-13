@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import {
   ScrollView,
   SafeAreaView,
-  StatusBar,
 } from 'react-native';
 import { 
   Box, 
@@ -15,7 +14,6 @@ import {
   Pressable,
   Heading,
   Icon,
-  Divider,
   Card,
   Modal,
   ModalBackdrop,
