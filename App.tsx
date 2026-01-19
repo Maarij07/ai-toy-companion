@@ -13,6 +13,9 @@ import { useState, useEffect } from 'react';
 import { GluestackUIProvider } from '@gluestack-ui/themed';
 import customConfig from './src/config/theme';
 
+// Supabase services
+import { AuthService } from './src/services';
+
 
 
 import SplashScreen from './src/components/SplashScreen';
@@ -31,19 +34,31 @@ function App() {
   const [currentScreen, setCurrentScreen] = useState<'login' | 'signup' | 'forgot' | 'onboarding' | 'setup' | 'home'>('login');
   
   useEffect(() => {
-    // Simulate app initialization
+    // Initialize app and check for existing session
     const initApp = async () => {
       // Show splash screen while initializing
       const splashTimer = setTimeout(() => {
         setShowSplash(false);
       }, 3000);
       
-      // Simulate initialization
-      setTimeout(() => {
-        setIsInitializing(false);
-        // Default to login screen
+      try {
+        // Check for existing session
+        const { data: sessionData, error: sessionError } = await AuthService.getSession();
+        
+        if (sessionData?.session && !sessionError) {
+          // User is already logged in
+          setCurrentScreen('home');
+        } else {
+          // No existing session, show login screen
+          setCurrentScreen('login');
+        }
+      } catch (error) {
+        console.error('Error checking session:', error);
+        // Default to login screen on error
         setCurrentScreen('login');
-      }, 1000);
+      } finally {
+        setIsInitializing(false);
+      }
       
       return () => {
         clearTimeout(splashTimer);

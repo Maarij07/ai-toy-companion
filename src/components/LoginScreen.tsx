@@ -1,5 +1,8 @@
 import React, { useState } from 'react';
 import { Alert, Platform, Image } from 'react-native';
+
+// Supabase services
+import { AuthService } from '../services';
 import { 
   Box, 
   Text, 
@@ -82,16 +85,18 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
     if (!hasError) {
       setIsLoading(true);
       try {
-        // Simulate login process
-        console.log('Attempting login with email:', email);
+        // Use Supabase AuthService for actual login
+        const { data, error } = await AuthService.signIn(email, password);
         
-        // Simulate API call delay
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        if (error) {
+          console.error('Login error:', error);
+          setLoginError(error.message || 'Login failed. Please try again.');
+          return;
+        }
         
-        // For demo purposes, accept any email/password combination
-        // In a real app without DB, you might have other validation
+        console.log('Login successful:', data);
         
-        // Navigate to home screen after successful "login"
+        // Navigate to home screen after successful login
         if (onNavigateToHome) {
           onNavigateToHome();
         }

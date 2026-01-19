@@ -1,5 +1,8 @@
 import React, { useState } from 'react';
 import { Alert, Image } from 'react-native';
+
+// Supabase services
+import { AuthService } from '../services';
 import { 
   Box, 
   Text, 
@@ -60,11 +63,14 @@ const ForgotPasswordScreen: React.FC<ForgotPasswordScreenProps> = ({
     if (!hasError) {
       setIsLoading(true);
       try {
-        // Simulate password reset email sending
-        console.log('Sending password reset to:', email);
+        // Use Supabase AuthService for password reset
+        const { error } = await AuthService.resetPassword(email);
         
-        // Simulate API call delay
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        if (error) {
+          console.error('Password reset error:', error);
+          Alert.alert('Password Reset Failed', error.message || 'Unable to send password reset email. Please try again.');
+          return;
+        }
         
         Alert.alert(
           'Password Reset Email Sent',

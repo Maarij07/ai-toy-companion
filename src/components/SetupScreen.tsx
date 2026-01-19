@@ -6,6 +6,9 @@ import {
   Keyboard,
   ScrollView,
 } from 'react-native';
+
+// Supabase services
+import { ToyService, AuthService } from '../services';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { 
   Box, 
@@ -139,20 +142,43 @@ const SetupScreen: React.FC<SetupScreenProps> = ({ onNavigateToHome }) => {
   const handleCompleteSetup = async () => {
     if (validateInputs()) {
       try {
-        // Create toy data object
-        const toyData = {
+        // Get current user ID from Supabase auth
+        const { data: sessionData } = await AuthService.getSession();
+        if (!sessionData?.session?.user) {
+          throw new Error('User not authenticated');
+        }
+        
+        const userId = sessionData.session.user.id;
+        
+        // Use Supabase ToyService to create the toy
+        const { data, error } = await ToyService.createToy(userId, {
           name: toyName.trim(),
-          owners: owners,
-          interests: selectedInterests,
-          customPersonality: customPrompt,
-          createdAt: new Date(),
+          custom_personality: customPrompt,
           connected: true,
-        };
+          is_active: true,
+        });
         
-        console.log('Toy setup completed and saved:', toyData);
+        if (error) {
+          console.error('Error creating toy:', error);
+          throw error;
+        }
         
-        // Simulate API call delay
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        // Add toy owners
+        for (const owner of owners) {
+          if (owner.name.trim() && owner.age.trim()) {
+            await ToyService.addOwnerToToy(data.id, {
+              name: owner.name.trim(),
+              age: parseInt(owner.age)
+            });
+          }
+        }
+        
+        // Add toy interests
+        for (const interest of selectedInterests) {
+          await ToyService.addInterestToToy(data.id, interest as any);
+        }
+        
+        console.log('Toy setup completed and saved:', data);
         
         // Navigate to home screen
         if (onNavigateToHome) {

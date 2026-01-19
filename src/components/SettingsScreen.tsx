@@ -3,6 +3,9 @@ import {
   ScrollView,
   Alert,
 } from 'react-native';
+
+// Supabase services
+import { AuthService } from '../services';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { 
   Box, 
@@ -35,9 +38,10 @@ import {
 
 interface SettingsScreenProps {
   onNavigateToHome?: () => void;
+  onNavigateToHelpCenter?: () => void;
 }
 
-const SettingsScreen: React.FC<SettingsScreenProps> = ({ onNavigateToHome }) => {
+const SettingsScreen: React.FC<SettingsScreenProps> = ({ onNavigateToHome, onNavigateToHelpCenter }) => {
   // State for toggle switches
   const [profanityFilter, setProfanityFilter] = useState(true);
   const [internetAccess, setInternetAccess] = useState(true);
@@ -61,10 +65,45 @@ const SettingsScreen: React.FC<SettingsScreenProps> = ({ onNavigateToHome }) => 
   // Mock subscription data
   const [subscriptionData] = useState({
     active: true,
+    planType: 'Basic', // Basic or Pro
     nextBilling: 'Nov 6, 2024',
-    amount: '$9.99',
+    amount: '$8.00',
     period: '/month'
   });
+
+  // Pricing plans
+  const pricingPlans = [
+    {
+      id: 'basic',
+      name: 'Basic Plan',
+      monthlyPrice: 8,
+      yearlyPrice: 80,
+      yearlySavings: 16, // 16% savings
+      features: [
+        '✓ Up to 2 connected toys',
+        '✓ Basic AI responses',
+        '✓ Standard safety filters',
+        '✓ Email support'
+      ],
+      popular: false
+    },
+    {
+      id: 'pro',
+      name: 'Pro Plan',
+      monthlyPrice: 19,
+      yearlyPrice: 180,
+      yearlySavings: 16, // 16% savings
+      features: [
+        '✓ Unlimited connected toys',
+        '✓ Advanced AI responses',
+        '✓ Premium safety filters',
+        '✓ Priority support',
+        '✓ Early access to new features',
+        '✓ Custom personalities'
+      ],
+      popular: true
+    }
+  ];
 
   const handleLogout = async () => {
     Alert.alert(
@@ -80,9 +119,21 @@ const SettingsScreen: React.FC<SettingsScreenProps> = ({ onNavigateToHome }) => 
           text: 'Sign Out',
           onPress: async () => {
             try {
-              // Simulate logout
-              console.log('User logged out');
-              // In a real app without DB, you might clear local storage/session
+              // Use Supabase AuthService for logout
+              const { error } = await AuthService.signOut();
+              
+              if (error) {
+                console.error('Logout error:', error);
+                Alert.alert('Error', error.message || 'Failed to sign out. Please try again.');
+                return;
+              }
+              
+              console.log('User logged out successfully');
+              
+              // Optionally navigate to login screen
+              if (onNavigateToHome) {
+                onNavigateToHome();
+              }
             } catch (error: any) {
               console.error('Logout error:', error);
               Alert.alert('Error', 'Failed to sign out. Please try again.');
@@ -139,9 +190,7 @@ const SettingsScreen: React.FC<SettingsScreenProps> = ({ onNavigateToHome }) => 
             <VStack space="md">
               <HStack justifyContent="space-between" alignItems="center" py="$3" borderBottomWidth={0.5} borderBottomColor="$borderLight300">
                 <VStack flex={1}>
-                  <FormControlLabel mb="$1">
-                    <FormControlLabelText color="$textDark800">Profanity Filter</FormControlLabelText>
-                  </FormControlLabel>
+                  <Text color="$textDark800" fontWeight="$medium">Profanity Filter</Text>
                   <Text size="sm" color="$textDark500">Block inappropriate language</Text>
                 </VStack>
                 <Switch 
@@ -152,9 +201,7 @@ const SettingsScreen: React.FC<SettingsScreenProps> = ({ onNavigateToHome }) => 
               
               <HStack justifyContent="space-between" alignItems="center" py="$3" borderBottomWidth={0.5} borderBottomColor="$borderLight300">
                 <VStack flex={1}>
-                  <FormControlLabel mb="$1">
-                    <FormControlLabelText color="$textDark800">Internet Access</FormControlLabelText>
-                  </FormControlLabel>
+                  <Text color="$textDark800" fontWeight="$medium">Internet Access</Text>
                   <Text size="sm" color="$textDark500">Allow toy to access online content</Text>
                 </VStack>
                 <Switch 
@@ -165,9 +212,7 @@ const SettingsScreen: React.FC<SettingsScreenProps> = ({ onNavigateToHome }) => 
               
               <HStack justifyContent="space-between" alignItems="center" py="$3" borderBottomWidth={0.5} borderBottomColor="$borderLight300">
                 <VStack flex={1}>
-                  <FormControlLabel mb="$1">
-                    <FormControlLabelText color="$textDark800">Daily Time Limit</FormControlLabelText>
-                  </FormControlLabel>
+                  <Text color="$textDark800" fontWeight="$medium">Daily Time Limit</Text>
                   <Text size="sm" color="$textDark500">Maximum play time per day</Text>
                 </VStack>
                 <Text size="md" fontWeight="$medium" color="$primary500">60 min</Text>
@@ -175,9 +220,7 @@ const SettingsScreen: React.FC<SettingsScreenProps> = ({ onNavigateToHome }) => 
               
               <HStack justifyContent="space-between" alignItems="center" py="$3" borderBottomWidth={0.5} borderBottomColor="$borderLight300">
                 <VStack flex={1}>
-                  <FormControlLabel mb="$1">
-                    <FormControlLabelText color="$textDark800">Voice Preview</FormControlLabelText>
-                  </FormControlLabel>
+                  <Text color="$textDark800" fontWeight="$medium">Voice Preview</Text>
                   <Text size="sm" color="$textDark500">Preview responses before toy speaks</Text>
                 </VStack>
                 <Switch 
@@ -188,9 +231,7 @@ const SettingsScreen: React.FC<SettingsScreenProps> = ({ onNavigateToHome }) => 
               
               <HStack justifyContent="space-between" alignItems="center" py="$3">
                 <VStack flex={1}>
-                  <FormControlLabel mb="$1">
-                    <FormControlLabelText color="$textDark800">Data Collection</FormControlLabelText>
-                  </FormControlLabel>
+                  <Text color="$textDark800" fontWeight="$medium">Data Collection</Text>
                   <Text size="sm" color="$textDark500">Allow usage analytics for improvement</Text>
                 </VStack>
                 <Switch 
@@ -257,12 +298,14 @@ const SettingsScreen: React.FC<SettingsScreenProps> = ({ onNavigateToHome }) => 
               <Heading size="sm" color="$textDark800">Subscription & Billing</Heading>
             </HStack>
             
-            <Box bg="$primary500" borderRadius="$md" p="$3" mb="$3">
+            {/* Current Plan Display */}
+            <Box bg="$primary500" borderRadius="$md" p="$4" mb="$4">
               <HStack justifyContent="space-between" alignItems="center">
                 <VStack>
-                  <Text size="md" fontWeight="$medium" color="$textLight50">Premium Plan</Text>
+                  <Text size="md" fontWeight="$medium" color="$textLight50">{subscriptionData.planType} Plan</Text>
                   <Text size="sm" fontWeight="$medium" color="$textLight50">{subscriptionData.active ? 'Active' : 'Inactive'}</Text>
                   <Text size="sm" color="$textLight50">Next billing: {subscriptionData.nextBilling}</Text>
+                  <Text size="xs" color="$textLight50" mt="$1">First month free trial</Text>
                 </VStack>
                 <VStack alignItems="flex-end">
                   <Text size="lg" fontWeight="$bold" color="$textLight50">{subscriptionData.amount}</Text>
@@ -271,12 +314,74 @@ const SettingsScreen: React.FC<SettingsScreenProps> = ({ onNavigateToHome }) => 
               </HStack>
             </Box>
             
+            {/* Pricing Plans */}
+            <VStack space="md" mb="$4">
+              <Heading size="sm" color="$textDark800" mb="$2">Upgrade Your Plan</Heading>
+              
+              {pricingPlans.map((plan) => (
+                <Box 
+                  key={plan.id}
+                  borderWidth={1.5} 
+                  borderColor={plan.popular ? "$primary500" : "$borderLight300"}
+                  borderRadius="$lg" 
+                  p="$4"
+                  bg={plan.popular ? "$primary50" : "$backgroundLight0"}
+                >
+                  {plan.popular && (
+                    <Box bg="$primary500" borderRadius="$full" alignSelf="flex-start" px="$3" py="$1" mb="$2">
+                      <Text size="xs" fontWeight="$bold" color="$textLight50">POPULAR</Text>
+                    </Box>
+                  )}
+                  
+                  <HStack justifyContent="space-between" alignItems="flex-start" mb="$3">
+                    <VStack>
+                      <Heading size="sm" color="$textDark800">{plan.name}</Heading>
+                      <Text size="xs" color="$textDark500">Billed {plan.yearlySavings}% less annually</Text>
+                    </VStack>
+                    <VStack alignItems="flex-end">
+                      <Text size="lg" fontWeight="$bold" color="$primary500">${plan.monthlyPrice}/mo</Text>
+                      <Text size="sm" color="$textDark500">or ${plan.yearlyPrice}/year</Text>
+                    </VStack>
+                  </HStack>
+                  
+                  <VStack space="sm" mb="$3">
+                    {plan.features.map((feature, index) => (
+                      <Text key={index} size="sm" color="$textDark800">{feature}</Text>
+                    ))}
+                  </VStack>
+                  
+                  <Button 
+                    variant={plan.popular ? "solid" : "outline"}
+                    action={plan.popular ? "primary" : "secondary"}
+                    size="md" 
+                    borderRadius="$lg"
+                    isDisabled={subscriptionData.planType.toLowerCase() === plan.id}
+                  >
+                    <ButtonText>
+                      {subscriptionData.planType.toLowerCase() === plan.id ? 'Current Plan' : `Choose ${plan.name}`}
+                    </ButtonText>
+                  </Button>
+                </Box>
+              ))}
+            </VStack>
+            
+            {/* Management Options */}
             <VStack space="sm">
               <Pressable py="$3" borderBottomWidth={0.5} borderBottomColor="$borderLight300">
                 <HStack alignItems="center" justifyContent="space-between">
                   <HStack alignItems="center">
                     <Icon as={Receipt} size="md" color="$textDark500" mr="$3" />
                     <Text size="md" color="$textDark800">Manage Subscription</Text>
+                  </HStack>
+                  <Icon as={ChevronRight} size="md" color="$textDark500" />
+                </HStack>
+              </Pressable>
+              
+              <Pressable py="$3" borderBottomWidth={0.5} borderBottomColor="$borderLight300">
+                <HStack alignItems="center" justifyContent="space-between">
+                  <HStack alignItems="center">
+                    <Icon as={Receipt} size="md" color="$textDark500" mr="$3" />
+                    <Text size="md" color="$textDark800">Payment Methods</Text>
                   </HStack>
                   <Icon as={ChevronRight} size="md" color="$textDark500" />
                 </HStack>
@@ -302,7 +407,7 @@ const SettingsScreen: React.FC<SettingsScreenProps> = ({ onNavigateToHome }) => 
             </HStack>
             
             <VStack space="sm">
-              <Pressable py="$3" borderBottomWidth={0.5} borderBottomColor="$borderLight300">
+              <Pressable py="$3" borderBottomWidth={0.5} borderBottomColor="$borderLight300" onPress={onNavigateToHelpCenter}>
                 <HStack alignItems="center" justifyContent="space-between">
                   <HStack alignItems="center">
                     <Icon as={HelpCircle} size="md" color="$textDark500" mr="$3" />
@@ -325,8 +430,8 @@ const SettingsScreen: React.FC<SettingsScreenProps> = ({ onNavigateToHome }) => 
               <Pressable py="$3" borderBottomWidth={0.5} borderBottomColor="$borderLight300">
                 <HStack alignItems="center" justifyContent="space-between">
                   <HStack alignItems="center">
-                    <Icon as={Lock} size="md" color="$textDark500" mr="$3" />
-                    <Text size="md" color="$textDark800">Privacy Policy</Text>
+                    <Icon as={FileText} size="md" color="$textDark500" mr="$3" />
+                    <Text size="md" color="$textDark800">Terms of Service</Text>
                   </HStack>
                   <Icon as={ChevronRight} size="md" color="$textDark500" />
                 </HStack>
@@ -335,8 +440,8 @@ const SettingsScreen: React.FC<SettingsScreenProps> = ({ onNavigateToHome }) => 
               <Pressable py="$3">
                 <HStack alignItems="center" justifyContent="space-between">
                   <HStack alignItems="center">
-                    <Icon as={FileText} size="md" color="$textDark500" mr="$3" />
-                    <Text size="md" color="$textDark800">Terms of Service</Text>
+                    <Icon as={Lock} size="md" color="$textDark500" mr="$3" />
+                    <Text size="md" color="$textDark800">Privacy Policy</Text>
                   </HStack>
                   <Icon as={ChevronRight} size="md" color="$textDark500" />
                 </HStack>

@@ -30,52 +30,59 @@ const TermsModal: React.FC<TermsModalProps> = ({ visible, onClose }) => {
       <View style={styles.modalContainer}>
         <View style={styles.modalContent}>
           <View style={styles.header}>
-            <Heading size="lg" color="$textDark800">Terms & Conditions</Heading>
+            <Heading size="lg" color="$textDark800">Terms of Service</Heading>
             <TouchableOpacity style={styles.closeButton} onPress={onClose}>
               <Text style={styles.closeButtonText}>✕</Text>
             </TouchableOpacity>
           </View>
           
           <ScrollView style={styles.content}>
-            <Text style={styles.sectionTitle}>1. Introduction</Text>
+            <Text style={styles.paragraph}>Last updated: 14/01/2026</Text>
+            
             <Text style={styles.paragraph}>
-              Welcome to AI Toy Companion. These terms and conditions outline the rules and regulations for the use of our application.
+              These Terms of Service ("Terms") govern the use of the AI Toy app, device ecosystem, and related services (collectively, "Services"). By using the Services, you agree to these Terms.
             </Text>
             
-            <Text style={styles.sectionTitle}>2. Intellectual Property</Text>
-            <Text style={styles.paragraph}>
-              All content, trademarks, logos, and intellectual property on this application are owned by AI Toy Companion or its licensors.
-            </Text>
+            <Text style={styles.sectionTitle}>1. Eligibility & Accounts</Text>
+            <Text style={styles.paragraph}>• The Services are intended for use by parents/guardians and families.</Text>
+            <Text style={styles.paragraph}>• A parent/guardian account may be required for onboarding, purchases, and settings.</Text>
+            <Text style={styles.paragraph}>• You are responsible for maintaining account security and device pairing security.</Text>
             
-            <Text style={styles.sectionTitle}>3. User Responsibilities</Text>
-            <Text style={styles.paragraph}>
-              Users must be at least 13 years old to use this application. Parents and guardians are responsible for supervising children under 16.
-            </Text>
+            <Text style={styles.sectionTitle}>2. Device Pairing & Security</Text>
+            <Text style={styles.paragraph}>To protect users and prevent unauthorized access:</Text>
+            <Text style={styles.paragraph}>• Devices use custom BLE services and proprietary UUIDs</Text>
+            <Text style={styles.paragraph}>• Onboarding may include QR code scanning and authentication</Text>
+            <Text style={styles.paragraph}>• Devices may refuse connections or restrict features unless successfully authenticated</Text>
+            <Text style={styles.paragraph}>You agree not to attempt to bypass pairing security or access devices not owned by you.</Text>
             
-            <Text style={styles.sectionTitle}>4. Data Collection</Text>
-            <Text style={styles.paragraph}>
-              We collect personal information to provide and improve our services. We use your data to enhance your experience with AI Toy Companion.
-            </Text>
+            <Text style={styles.sectionTitle}>3. Acceptable Use</Text>
+            <Text style={styles.paragraph}>You may not:</Text>
+            <Text style={styles.paragraph}>• Reverse engineer, exploit, or interfere with device/app security</Text>
+            <Text style={styles.paragraph}>• Use the Services for illegal, harmful, abusive, or unsafe activity</Text>
+            <Text style={styles.paragraph}>• Upload or use content that infringes intellectual property or privacy rights</Text>
+            <Text style={styles.paragraph}>• Attempt to clone voices or impersonate individuals without permission</Text>
+            <Text style={styles.paragraph}>• Harass, threaten, or endanger others via the Services</Text>
             
-            <Text style={styles.sectionTitle}>5. Prohibited Activities</Text>
-            <Text style={styles.paragraph}>
-              You agree not to misuse our service or help anyone else do so. This includes attempting to access, tamper with, or use non-public APIs.
-            </Text>
+            <Text style={styles.sectionTitle}>4. AI Features & Content Disclaimer</Text>
+            <Text style={styles.paragraph}>The Services may generate content using AI (including text and voice). AI outputs may be inaccurate. Do not rely on AI responses for medical, legal, or emergency purposes.</Text>
             
-            <Text style={styles.sectionTitle}>6. Limitation of Liability</Text>
-            <Text style={styles.paragraph}>
-              AI Toy Companion shall not be liable for any indirect, incidental, special, consequential, or punitive damages resulting from your use of our services.
-            </Text>
+            <Text style={styles.sectionTitle}>5. Subscriptions</Text>
+            <Text style={styles.paragraph}>If you purchase a subscription, it will auto-renew unless cancelled. You may cancel at any time in the App or through your app store billing settings.</Text>
             
-            <Text style={styles.sectionTitle}>7. Changes to Terms</Text>
-            <Text style={styles.paragraph}>
-              We reserve the right to modify these terms at any time. Continued use of the application after changes constitutes acceptance of the updated terms.
-            </Text>
+            <Text style={styles.sectionTitle}>6. Termination for Misuse / Abuse</Text>
+            <Text style={styles.paragraph}>We may suspend, restrict, or terminate your access to the Services (including disabling device connectivity, blocking pairing, or restricting Digital Goods) if we reasonably believe you have:</Text>
+            <Text style={styles.paragraph}>• Misused, intentionally damaged, or tampered with the physical device</Text>
+            <Text style={styles.paragraph}>• Attempted to bypass BLE security, pairing, authentication, or firmware restrictions</Text>
+            <Text style={styles.paragraph}>• Used the system in a way that risks harm to children or other users</Text>
+            <Text style={styles.paragraph}>• Engaged in fraud, abusive payment activity, or refund abuse</Text>
+            <Text style={styles.paragraph}>• Violated acceptable use, IP rights, or safety rules</Text>
+            <Text style={styles.paragraph}>If access is terminated due to misuse, refunds may be denied except where required by law.</Text>
             
-            <Text style={styles.sectionTitle}>8. Contact Us</Text>
-            <Text style={styles.paragraph}>
-              If you have any questions about these terms, please contact us at support@aitoycompanion.com
-            </Text>
+            <Text style={styles.sectionTitle}>7. Limitation of Liability</Text>
+            <Text style={styles.paragraph}>To the extent permitted by law, we are not liable for indirect or consequential damages arising from use of the Services.</Text>
+            
+            <Text style={styles.sectionTitle}>8. Changes</Text>
+            <Text style={styles.paragraph}>We may update these Terms. If we make material changes, we will notify users in the App.</Text>
           </ScrollView>
         </View>
       </View>
@@ -117,6 +124,13 @@ const styles = StyleSheet.create({
     color: '#3C3C3C',
     marginTop: 16,
     marginBottom: 8,
+  },
+  sectionTitleSmall: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#3C3C3C',
+    marginTop: 12,
+    marginBottom: 4,
   },
   paragraph: {
     fontSize: 14,

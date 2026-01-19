@@ -1,9 +1,12 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   FlatList,
   SafeAreaView,
   ScrollView as RNScrollView
 } from 'react-native';
+
+// Supabase services
+import { ProductService } from '../services';
 import { 
   Box, 
   Text, 
@@ -64,7 +67,57 @@ const MarketplaceScreen: React.FC<MarketplaceScreenProps> = ({ navigation, onNav
   const [searchQuery, setSearchQuery] = useState('');
   const [showClearButton, setShowClearButton] = useState(false);
   
-  const marketplaceItems: Product[] = [
+  const [marketplaceItems, setMarketplaceItems] = useState<Product[]>([]);
+  const [loading, setLoading] = useState(true);
+  
+  // Fetch products from Supabase
+  useEffect(() => {
+    const fetchProducts = async () => {
+      try {
+        const { data, error } = await ProductService.getAllProducts();
+        
+        if (error) {
+          console.error('Error fetching products:', error);
+          // Fallback to mock data if there's an error
+          setMarketplaceItems(mockProducts);
+        } else if (data) {
+          // Convert Supabase data to our Product format
+          const formattedProducts = (data as any[]).map((item: any) => ({
+            id: typeof item.id === 'string' ? parseInt(item.id) : item.id,
+            name: item.name,
+            price: parseFloat(item.price),
+            originalPrice: item.original_price ? parseFloat(item.original_price) : null,
+            image: item.image_url,
+            rating: item.rating ? parseFloat(item.rating) : 0,
+            reviews: item.review_count || 0,
+            category: item.category,
+            discount: item.discount_percent || 0,
+            badge: item.badge,
+            brand: item.brand || '',
+            ageRange: item.age_range || '',
+            features: Array.isArray(item.features) ? item.features : [],
+            description: item.description,
+          }));
+          
+          setMarketplaceItems(formattedProducts);
+        } else {
+          // If data is null, use mock data
+          setMarketplaceItems(mockProducts);
+        }
+      } catch (error) {
+        console.error('Unexpected error fetching products:', error);
+        // Fallback to mock data
+        setMarketplaceItems(mockProducts);
+      } finally {
+        setLoading(false);
+      }
+    };
+    
+    fetchProducts();
+  }, []);
+  
+  // Mock products as fallback
+  const mockProducts: Product[] = [
     {
       id: 1,
       name: 'Buddy the Bear',
@@ -356,23 +409,29 @@ const MarketplaceScreen: React.FC<MarketplaceScreenProps> = ({ navigation, onNav
           </Pressable>
         </HStack>
         
-        {/* Products FlatList with header components */}
-        <FlatList
-          data={filteredItems}
-          renderItem={renderProductCard}
-          keyExtractor={(item) => item.id.toString()}
-          numColumns={2}
-          ListHeaderComponent={ListHeaderComponent}
-          contentContainerStyle={{ paddingHorizontal: 8 }}
-          showsVerticalScrollIndicator={false}
-          ListEmptyComponent={
-            <VStack flex={1} justifyContent="center" alignItems="center" py="$10">
-              <Icon as={Search} size="2xl" color="$textDark300" mb="$4" />
-              <Heading size="md" color="$textDark800" mb="$2">No items found</Heading>
-              <Text size="sm" color="$textDark500" textAlign="center">Try adjusting your search or filters</Text>
-            </VStack>
-          }
-        />
+        {loading ? (
+          <VStack flex={1} justifyContent="center" alignItems="center">
+            <Spinner size="large" color="$primary500" />
+            <Text mt="$2" color="$textDark500">Loading products...</Text>
+          </VStack>
+        ) : (
+          <FlatList
+            data={filteredItems}
+            renderItem={renderProductCard}
+            keyExtractor={(item) => item.id.toString()}
+            numColumns={2}
+            ListHeaderComponent={ListHeaderComponent}
+            contentContainerStyle={{ paddingHorizontal: 8 }}
+            showsVerticalScrollIndicator={false}
+            ListEmptyComponent={
+              <VStack flex={1} justifyContent="center" alignItems="center" py="$10">
+                <Icon as={Search} size="2xl" color="$textDark300" mb="$4" />
+                <Heading size="md" color="$textDark800" mb="$2">No items found</Heading>
+                <Text size="sm" color="$textDark500" textAlign="center">Try adjusting your search or filters</Text>
+              </VStack>
+            }
+          />
+        )}
       </VStack>
     </SafeAreaView>
   );

@@ -166,38 +166,38 @@ const ProductDetailScreen: React.FC<ProductDetailScreenProps> = ({ route, naviga
                 </Text>
               </HStack>
               {product.discount && (
-                <Badge bg="$error500" borderRadius="$full" px="$2" py="$1" mt="$1">
-                  <BadgeText size="xs" color="$textLight50" fontWeight="$medium">
+                <Box bg="$error500" borderRadius="$full" px="$2" py="$1" mt="$1">
+                  <Text size="xs" color="$textLight50" fontWeight="$medium">
                     Save {product.discount}%
-                  </BadgeText>
-                </Badge>
+                  </Text>
+                </Box>
               )}
             </VStack>
           </HStack>
 
-          <Divider my="$3" />
+          <Box my="$3" h="$0.5" bg="$borderLight300" />
 
           {/* Age Range and Features */}
           <HStack flexWrap="wrap" mb="$4">
             <Box mr="$3" mb="$2">
-              <Badge bg="$primary200" borderRadius="$full" px="$3" py="$1">
-                <BadgeText size="xs" color="$textDark800" fontWeight="$medium">
+              <Box bg="$primary200" borderRadius="$full" px="$3" py="$1">
+                <Text size="xs" color="$textDark800" fontWeight="$medium">
                   {product.ageRange}
-                </BadgeText>
-              </Badge>
+                </Text>
+              </Box>
             </Box>
             {product.features.map((feature, index) => (
               <Box key={index} mr="$2" mb="$2">
-                <Badge bg="$secondary200" borderRadius="$full" px="$3" py="$1">
-                  <BadgeText size="xs" color="$textDark800" fontWeight="$medium">
+                <Box bg="$secondary200" borderRadius="$full" px="$3" py="$1">
+                  <Text size="xs" color="$textDark800" fontWeight="$medium">
                     {feature}
-                  </BadgeText>
-                </Badge>
+                  </Text>
+                </Box>
               </Box>
             ))}
           </HStack>
 
-          <Divider my="$3" />
+          <Box my="$3" h="$0.5" bg="$borderLight300" />
 
           {/* Description */}
           <VStack mb="$4">
@@ -207,7 +207,7 @@ const ProductDetailScreen: React.FC<ProductDetailScreenProps> = ({ route, naviga
             </Text>
           </VStack>
 
-          <Divider my="$3" />
+          <Box my="$3" h="$0.5" bg="$borderLight300" />
 
           {/* Features List */}
           <VStack mb="$4">
@@ -215,20 +215,20 @@ const ProductDetailScreen: React.FC<ProductDetailScreenProps> = ({ route, naviga
             <VStack space="sm">
               <HStack alignItems="center">
                 <Icon as={Truck} size="sm" color="$primary500" mr="$2" />
-                <Text size="sm" color="$textDark800">Free shipping on orders over $50</Text>
+                <Text size="sm" color="$textDark800">Shipping calculated at checkout</Text>
               </HStack>
               <HStack alignItems="center">
                 <Icon as={Shield} size="sm" color="$primary500" mr="$2" />
-                <Text size="sm" color="$textDark800">30-day money-back guarantee</Text>
+                <Text size="sm" color="$textDark800">30-day money-back guarantee (physical toys)</Text>
               </HStack>
               <HStack alignItems="center">
                 <Icon as={RotateCcw} size="sm" color="$primary500" mr="$2" />
-                <Text size="sm" color="$textDark800">Easy returns and exchanges</Text>
+                <Text size="sm" color="$textDark800">5-day refund policy (digital goods)</Text>
               </HStack>
             </VStack>
           </VStack>
 
-          <Divider my="$3" />
+          <Box my="$3" h="$0.5" bg="$borderLight300" />
 
           {/* Quantity Selector */}
           <HStack justifyContent="space-between" alignItems="center" mb="$4">

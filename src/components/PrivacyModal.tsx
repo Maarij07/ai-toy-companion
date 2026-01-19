@@ -37,50 +37,60 @@ const PrivacyModal: React.FC<PrivacyModalProps> = ({ visible, onClose }) => {
           </View>
           
           <ScrollView style={styles.content}>
-            <Text style={styles.sectionTitle}>1. Information We Collect</Text>
+            <Text style={styles.paragraph}>Last updated: 14/01/2026</Text>
+            
             <Text style={styles.paragraph}>
-              We collect personal information that you provide directly to us, such as when you create an account, use our services, or communicate with us.
+              This Privacy Policy explains how we collect, use, and protect information when you use the AI Toy app and related devices.
             </Text>
             
-            <Text style={styles.sectionTitle}>2. How We Use Your Information</Text>
-            <Text style={styles.paragraph}>
-              We use your information to provide, maintain, and improve our services, to communicate with you, and to personalize your experience.
-            </Text>
+            <Text style={styles.sectionTitle}>1. Data We Collect</Text>
+            <Text style={styles.paragraph}>We may collect:</Text>
+            <Text style={styles.paragraph}>• Account data: email, name, profile data, subscription status</Text>
+            <Text style={styles.paragraph}>• Device data: toy serial number, pairing status, battery info, diagnostics</Text>
+            <Text style={styles.paragraph}>• Usage data: feature usage, crash logs, analytics</Text>
+            <Text style={styles.paragraph}>• Audio data (if enabled): voice recordings or transcripts to provide AI features</Text>
+            <Text style={styles.paragraph}>• Purchase data: subscription plan, payment confirmation (we do not store full card details)</Text>
             
-            <Text style={styles.sectionTitle}>3. Data Security</Text>
-            <Text style={styles.paragraph}>
-              We implement appropriate security measures to protect your personal information against unauthorized access, alteration, disclosure, or destruction.
-            </Text>
+            <Text style={styles.sectionTitle}>2. How We Use Data</Text>
+            <Text style={styles.paragraph}>We use data to:</Text>
+            <Text style={styles.paragraph}>• Provide toy functionality (pairing, settings, modes)</Text>
+            <Text style={styles.paragraph}>• Provide AI features (speech-to-text, responses, voices)</Text>
+            <Text style={styles.paragraph}>• Store interaction history, notes, and preferences (if enabled)</Text>
+            <Text style={styles.paragraph}>• Process purchases and subscriptions</Text>
+            <Text style={styles.paragraph}>• Improve product performance and safety</Text>
+            <Text style={styles.paragraph}>• Detect misuse, fraud, and security threats (e.g., pairing abuse, payment abuse)</Text>
+            
+            <Text style={styles.sectionTitle}>3. Audio + AI Processing</Text>
+            <Text style={styles.paragraph}>Audio may be processed to generate transcripts and AI responses. Depending on your settings, audio and transcripts may be stored for:</Text>
+            <Text style={styles.paragraph}>• conversation history</Text>
+            <Text style={styles.paragraph}>• product improvement</Text>
+            <Text style={styles.paragraph}>• personalization</Text>
+            <Text style={styles.paragraph}>You can control storage options in Settings where available.</Text>
             
             <Text style={styles.sectionTitle}>4. Children's Privacy</Text>
-            <Text style={styles.paragraph}>
-              Our services are not intended for children under 13. We do not knowingly collect personal information from children under 13.
-            </Text>
+            <Text style={styles.paragraph}>The Services are intended to be used under a parent/guardian account. We do not knowingly collect personal data from children without guardian control. Parents/guardians can request deletion of associated data.</Text>
             
-            <Text style={styles.sectionTitle}>5. Data Retention</Text>
-            <Text style={styles.paragraph}>
-              We retain your personal information for as long as necessary to provide our services and comply with our legal obligations.
-            </Text>
+            <Text style={styles.sectionTitle}>5. Sharing of Data</Text>
+            <Text style={styles.paragraph}>We may share limited data with service providers that help run the app, such as:</Text>
+            <Text style={styles.paragraph}>• Cloud hosting</Text>
+            <Text style={styles.paragraph}>• Speech-to-text processing</Text>
+            <Text style={styles.paragraph}>• AI processing</Text>
+            <Text style={styles.paragraph}>• Payments (e.g., Stripe)</Text>
+            <Text style={styles.paragraph}>These providers are required to protect user data.</Text>
+            <Text style={styles.paragraph}>We do not sell personal data.</Text>
             
-            <Text style={styles.sectionTitle}>6. Your Rights</Text>
-            <Text style={styles.paragraph}>
-              You have the right to access, update, or delete your personal information. You may also object to processing or request data portability.
-            </Text>
+            <Text style={styles.sectionTitle}>6. Data Retention</Text>
+            <Text style={styles.paragraph}>We retain data only as long as needed for the Services, legal obligations, safety, and fraud prevention. You may request deletion.</Text>
             
-            <Text style={styles.sectionTitle}>7. Third-Party Services</Text>
-            <Text style={styles.paragraph}>
-              We may share your information with third-party service providers who assist us in operating our app and conducting business.
-            </Text>
+            <Text style={styles.sectionTitle}>7. Security</Text>
+            <Text style={styles.paragraph}>We use encryption, secure device pairing, and access controls designed to protect users from unauthorized access.</Text>
             
-            <Text style={styles.sectionTitle}>8. Changes to Privacy Policy</Text>
-            <Text style={styles.paragraph}>
-              We may update our Privacy Policy from time to time. We will notify you of any changes by posting the new policy on this page.
-            </Text>
-            
-            <Text style={styles.sectionTitle}>9. Contact Us</Text>
-            <Text style={styles.paragraph}>
-              If you have any questions about this privacy policy, please contact us at privacy@aitoycompanion.com
-            </Text>
+            <Text style={styles.sectionTitle}>8. Your Rights</Text>
+            <Text style={styles.paragraph}>You may request:</Text>
+            <Text style={styles.paragraph}>• Access to your data</Text>
+            <Text style={styles.paragraph}>• Correction of your data</Text>
+            <Text style={styles.paragraph}>• Deletion of your data</Text>
+            <Text style={styles.paragraph}>Contact: [privacy@email.com]</Text>
           </ScrollView>
         </View>
       </View>

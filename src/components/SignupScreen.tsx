@@ -1,5 +1,8 @@
 import React, { useState } from 'react';
 import { Alert, Platform, Image, ScrollView } from 'react-native';
+
+// Supabase services
+import { AuthService } from '../services';
 import { 
   Box, 
   Text, 
@@ -120,13 +123,18 @@ const SignupScreen: React.FC<SignupScreenProps> = ({
       setIsLoading(true);
       
       try {
-        // Simulate user creation
-        console.log('Creating user with name:', name, 'and email:', email);
+        // Use Supabase AuthService for actual signup
+        const { data, error } = await AuthService.signUp(email, password, name);
         
-        // Simulate API call delay
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        if (error) {
+          console.error('Signup error:', error);
+          Alert.alert('Sign Up Failed', error.message || 'Failed to create account. Please try again.');
+          return;
+        }
         
-        // Navigate to onboarding screen after successful "signup"
+        console.log('Signup successful:', data);
+        
+        // Navigate to onboarding screen after successful signup
         if (onNavigateToOnboarding) {
           onNavigateToOnboarding();
         }

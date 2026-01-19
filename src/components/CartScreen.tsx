@@ -1,8 +1,13 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   ScrollView,
   SafeAreaView,
 } from 'react-native';
+
+// Supabase services
+import { CartService, AuthService, PaymentService } from '../services';
+import StripeCheckout from './StripeCheckout';
+import { Alert } from 'react-native';
 import { 
   Box, 
   Text, 
@@ -21,7 +26,9 @@ import {
   ModalHeader,
   ModalBody,
   ModalCloseButton,
-  ModalFooter
+  ModalFooter,
+  Divider,
+  Spinner
 } from '@gluestack-ui/themed';
 import { 
   User, 
@@ -48,7 +55,104 @@ interface CartItem {
 }
 
 const CartScreen = () => {
-  const [cartItems, setCartItems] = useState<CartItem[]>([
+  const [cartItems, setCartItems] = useState<CartItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  
+  // Fetch cart items from Supabase
+  useEffect(() => {
+    const fetchCartItems = async () => {
+      try {
+        const { data: sessionData } = await AuthService.getSession();
+        if (!sessionData?.session?.user) {
+          throw new Error('User not authenticated');
+        }
+        
+        const userId = sessionData.session.user.id;
+        const { data, error } = await CartService.getUserCart(userId);
+        
+        if (error) {
+          console.error('Error fetching cart items:', error);
+          // Fallback to mock data if there's an error
+          setCartItems(mockCartItems);
+        } else if (data) {
+          // Convert Supabase data to our CartItem format
+          const formattedCartItems = data.map((item: any) => ({
+            id: typeof item.id === 'string' ? parseInt(item.id) : item.id, // Use the cart item ID for updates/removals
+            name: item.products.name,
+            price: parseFloat(item.products.price),
+            originalPrice: item.products.original_price ? parseFloat(item.products.original_price) : parseFloat(item.products.price),
+            image: item.products.image_url,
+            quantity: item.quantity,
+            discount: item.products.discount_percent || 0,
+          }));
+          
+          setCartItems(formattedCartItems);
+        } else {
+          // If data is null, use mock data
+          setCartItems(mockCartItems);
+        }
+      } catch (error) {
+        console.error('Unexpected error fetching cart items:', error);
+        // Fallback to mock data
+        setCartItems(mockCartItems);
+      } finally {
+        setLoading(false);
+      }
+    };
+    
+    fetchCartItems();
+  }, []);
+  
+  const updateQuantity = async (id: number, newQuantity: number) => {
+    if (newQuantity < 1) return;
+    
+    try {
+      // Update quantity in Supabase - id refers to the cart item ID, not product ID
+      const { error } = await CartService.updateItemQuantity(id.toString(), newQuantity);
+      
+      if (error) {
+        console.error('Error updating item quantity:', error);
+        // Fallback to local state update if Supabase fails
+        setCartItems(prevItems =>
+          prevItems.map(item =>
+            item.id === id ? { ...item, quantity: newQuantity } : item
+          )
+        );
+        return;
+      }
+      
+      // Update local state
+      setCartItems(prevItems =>
+        prevItems.map(item =>
+          item.id === id ? { ...item, quantity: newQuantity } : item
+        )
+      );
+    } catch (error) {
+      console.error('Error updating item quantity:', error);
+    }
+  };
+
+  const removeItem = async (id: number) => {
+    try {
+      // Remove item from Supabase cart - id refers to the cart item ID, not product ID
+      const { error } = await CartService.removeItemFromCart(id.toString());
+      
+      if (error) {
+        console.error('Error removing item:', error);
+        // Fallback to local state removal if Supabase fails
+        setCartItems(prevItems => prevItems.filter(item => item.id !== id));
+        return;
+      }
+      
+      // Update local state
+      setCartItems(prevItems => prevItems.filter(item => item.id !== id));
+    } catch (error) {
+      console.error('Error removing item:', error);
+    }
+  };
+  
+  // Mock cart items as fallback
+  const mockCartItems: CartItem[] = [
     {
       id: 1,
       name: 'Buddy the Bear',
@@ -76,20 +180,7 @@ const CartScreen = () => {
       quantity: 1,
       discount: 20,
     },
-  ]);
-
-  const updateQuantity = (id: number, newQuantity: number) => {
-    if (newQuantity < 1) return;
-    setCartItems(prevItems =>
-      prevItems.map(item =>
-        item.id === id ? { ...item, quantity: newQuantity } : item
-      )
-    );
-  };
-
-  const removeItem = (id: number) => {
-    setCartItems(prevItems => prevItems.filter(item => item.id !== id));
-  };
+  ];
 
   const subtotal = cartItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
   const discount = cartItems.reduce((sum, item) => {
@@ -192,6 +283,44 @@ const CartScreen = () => {
     );
   }
 
+  if (loading) {
+    return (
+      <SafeAreaView style={{ flex: 1, backgroundColor: '#FFFFFF' }}>
+        <VStack flex={1} justifyContent="center" alignItems="center">
+          <Spinner size="large" color="$primary500" />
+          <Text mt="$2" color="$textDark500">Loading cart items...</Text>
+        </VStack>
+      </SafeAreaView>
+    );
+  }
+  
+  if (cartItems.length === 0) {
+    return (
+      <SafeAreaView style={{ flex: 1, backgroundColor: '#FFFFFF' }}>
+        <VStack flex={1}>
+          {/* Sticky Header */}
+          <HStack justifyContent="space-between" alignItems="center" p="$4" bg="$backgroundLight0" borderBottomWidth={0.5} borderBottomColor="$borderLight300">
+            <Pressable p="$2">
+              <Icon as={User} size="xl" color="$textDark800" />
+            </Pressable>
+            
+            <Heading size="md" color="$textDark800">My Cart</Heading>
+            
+            <Pressable p="$2">
+              <Icon as={Bell} size="lg" color="$textDark800" />
+            </Pressable>
+          </HStack>
+          
+          <VStack flex={1} justifyContent="center" alignItems="center" px="$10">
+            <Icon as={ShoppingCart} size="5xl" color="$textDark300" mb="$4" />
+            <Heading size="lg" color="$textDark800" textAlign="center" mb="$2">Your cart is empty</Heading>
+            <Text size="md" color="$textDark500" textAlign="center">Add some toys to get started!</Text>
+          </VStack>
+        </VStack>
+      </SafeAreaView>
+    );
+  }
+  
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#FFFFFF' }}>
       <VStack flex={1}>
@@ -246,7 +375,7 @@ const CartScreen = () => {
               <Text size="sm" fontWeight="$medium" color="$textDark800">${shipping.toFixed(2)}</Text>
             </HStack>
 
-            <Divider my="$3" />
+            <Box my="$3" h="$0.5" bg="$borderLight300" />
 
             <HStack justifyContent="space-between" alignItems="center">
               <Text size="md" fontWeight="$bold" color="$textDark800">Total</Text>
@@ -267,7 +396,7 @@ const CartScreen = () => {
                     <Text size="xs" color="$textDark500">3-5 business days</Text>
                   </VStack>
                 </HStack>
-                <Text size="sm" fontWeight="$medium" color="$textDark800">$0.00</Text>
+                <Text size="sm" fontWeight="$medium" color="$textDark800">$5.99</Text>
               </HStack>
               
               <HStack justifyContent="space-between" alignItems="center" py="$2">
@@ -278,7 +407,7 @@ const CartScreen = () => {
                     <Text size="xs" color="$textDark500">1-2 business days</Text>
                   </VStack>
                 </HStack>
-                <Text size="sm" fontWeight="$medium" color="$textDark800">$9.99</Text>
+                <Text size="sm" fontWeight="$medium" color="$textDark800">$14.99</Text>
               </HStack>
             </VStack>
           </Box>
@@ -306,19 +435,35 @@ const CartScreen = () => {
           <ModalBackdrop />
           <ModalContent>
             <ModalHeader>
-              <Heading size="md" color="$textDark800">Checkout System</Heading>
+              <Heading size="md" color="$textDark800">Complete Your Purchase</Heading>
               <ModalCloseButton onPress={() => setShowCheckoutModal(false)}>
                 <Icon as={X} size="md" color="$textDark800" />
               </ModalCloseButton>
             </ModalHeader>
             <ModalBody>
-              <Text size="sm" color="$textDark800">Checkout system will come here</Text>
+              <StripeCheckout 
+                amount={total}
+                description={`AI Toy Purchase - ${cartItems.length} items`}
+                onSuccess={(paymentIntentId) => {
+                  // Clear the cart after successful payment
+                  setCartItems([]);
+                  
+                  // Show success message
+                  Alert.alert('Success', `Payment successful! Order ID: ${paymentIntentId}`);
+                  setShowCheckoutModal(false);
+                }}
+                onCancel={() => setShowCheckoutModal(false)}
+                onError={(error) => {
+                  Alert.alert('Payment Error', error);
+                }}
+              />
+              
+              <Box mt="$4" p="$3" bg="$backgroundLight50" borderRadius="$md">
+                <Text size="xs" color="$textDark500">By completing this purchase, you agree to our refund policy:</Text>
+                <Text size="xs" color="$textDark500">• 30-day money back guarantee applies to physical toys</Text>
+                <Text size="xs" color="$textDark500">• 5-day refund policy for digital goods</Text>
+              </Box>
             </ModalBody>
-            <ModalFooter>
-              <Button size="sm" variant="outline" action="secondary" onPress={() => setShowCheckoutModal(false)}>
-                <ButtonText>Close</ButtonText>
-              </Button>
-            </ModalFooter>
           </ModalContent>
         </Modal>
       </VStack>
