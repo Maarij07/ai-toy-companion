@@ -166,7 +166,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
     <Box flex={1} bg="$backgroundLight0" p="$4" justifyContent="center">
       <Center mb="$8">
         <Image 
-          source={require('src/public/logo.png')} 
+          source={require('../public/logo.png')} 
           alt="Logo"
           style={{ width: 80, height: 80, marginBottom: 16 }}
         />

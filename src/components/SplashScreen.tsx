@@ -280,7 +280,7 @@ const SplashScreen = () => {
           ]}
         >
           <Image 
-            source={require('src/public/logo.png')} 
+            source={require('../public/logo.png')} 
             style={styles.logoImage}
             resizeMode="contain"
           />
