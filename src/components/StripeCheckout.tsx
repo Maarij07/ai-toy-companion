@@ -18,6 +18,10 @@ import {
 } from '@gluestack-ui/themed';
 import { Eye, EyeOff } from 'lucide-react-native';
 import { PaymentService } from '../services';
+import {
+  useStripe,
+  CardField,
+} from '@stripe/stripe-react-native';
 
 interface StripeCheckoutProps {
   amount: number;
@@ -36,69 +40,19 @@ const StripeCheckout: React.FC<StripeCheckoutProps> = ({
   onCancel,
   onError
 }) => {
-  const [cardNumber, setCardNumber] = useState('');
-  const [expiry, setExpiry] = useState('');
-  const [cvc, setCvc] = useState('');
   const [name, setName] = useState('');
+  const [cardDetails, setCardDetails] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [showCvc, setShowCvc] = useState(false);
-
-  const formatCardNumber = (value: string) => {
-    // Remove all non-digit characters
-    const digits = value.replace(/\D/g, '');
-    
-    // Format as XXXX XXXX XXXX XXXX
-    return digits
-      .replace(/(\d{4})(?=\d)/g, '$1 ')
-      .substring(0, 19);
-  };
-
-  const formatExpiry = (value: string) => {
-    // Remove all non-digit characters
-    const digits = value.replace(/\D/g, '');
-    
-    // Format as MM/YY
-    if (digits.length >= 3) {
-      return `${digits.substring(0, 2)}/${digits.substring(2, 4)}`;
-    }
-    return digits;
-  };
-
-  const formatCvc = (value: string) => {
-    // CVC is typically 3-4 digits
-    return value.replace(/\D/g, '').substring(0, 4);
-  };
-
-  const handleCardNumberChange = (value: string) => {
-    setCardNumber(formatCardNumber(value));
-  };
-
-  const handleExpiryChange = (value: string) => {
-    setExpiry(formatExpiry(value));
-  };
-
-  const handleCvcChange = (value: string) => {
-    setCvc(formatCvc(value));
-  };
+  const stripe = useStripe();
 
   const validateForm = () => {
-    if (!cardNumber || cardNumber.replace(/\s/g, '').length < 16) {
-      Alert.alert('Validation Error', 'Please enter a valid card number');
-      return false;
-    }
-
-    if (!expiry || !/^\d{2}\/\d{2}$/.test(expiry)) {
-      Alert.alert('Validation Error', 'Please enter a valid expiry date (MM/YY)');
-      return false;
-    }
-
-    if (!cvc || cvc.length < 3) {
-      Alert.alert('Validation Error', 'Please enter a valid CVC (3-4 digits)');
-      return false;
-    }
-
     if (!name.trim()) {
       Alert.alert('Validation Error', 'Please enter the cardholder name');
+      return false;
+    }
+    
+    if (!cardDetails) {
+      Alert.alert('Validation Error', 'Please enter card details');
       return false;
     }
 
@@ -122,14 +76,25 @@ const StripeCheckout: React.FC<StripeCheckoutProps> = ({
 
       console.log('Payment intent created:', paymentResult);
 
-      // In a real app, we would use the Stripe SDK to confirm the payment with actual card details
-      // For this simulation, we'll proceed directly to confirmation
-      const confirmResult = await PaymentService.confirmPaymentIntent(paymentResult.id);
+      // Use the Stripe SDK to confirm the payment with the card details
+      const { error, paymentIntent } = await stripe.confirmPayment(
+        paymentResult.client_secret,
+        {
+          paymentMethodType: 'Card',
+          paymentMethodData: {
+            billingDetails: {
+              name: name,
+            },
+          },
+        }
+      );
 
-      if (confirmResult.status === 'succeeded') {
-        onSuccess(confirmResult.payment_intent_id);
-      } else {
-        throw new Error('Payment confirmation failed');
+      if (error) {
+        throw error;
+      }
+      
+      if (paymentIntent) {
+        onSuccess(paymentIntent.id);
       }
     } catch (error: any) {
       console.error('Payment error:', error);
@@ -154,57 +119,29 @@ const StripeCheckout: React.FC<StripeCheckoutProps> = ({
       <VStack space="md">
         <FormControl isRequired mb="$3">
           <FormControlLabel mb="$2">
-            <FormControlLabelText size="sm" color="$textDark800">Card Number</FormControlLabelText>
+            <FormControlLabelText size="sm" color="$textDark800">Card Information</FormControlLabelText>
           </FormControlLabel>
-          <Input variant="outline" size="md" borderRadius="$lg">
-            <InputField 
-              placeholder="1234 5678 9012 3456"
-              value={cardNumber}
-              onChangeText={handleCardNumberChange}
-              keyboardType="numeric"
-              maxLength={19}
-              autoCapitalize="none"
+          <Box bg="$backgroundLight0" borderRadius="$lg" borderWidth={1} borderColor="$borderLight300" p="$3">
+            <CardField
+              postalCodeEnabled={false}
+              placeholders={{
+                number: '4242 4242 4242 4242',
+              }}
+              cardStyle={{
+                borderWidth: 1,
+                borderColor: '#ccc',
+                borderRadius: 8,
+              }}
+              style={{ width: '100%', height: 50 }}
+              onCardChange={(cardDetails) => {
+                setCardDetails(cardDetails);
+              }}
+              onFocus={(focusedField) => {
+                console.log('focus field', focusedField);
+              }}
             />
-          </Input>
+          </Box>
         </FormControl>
-
-        <HStack space="sm" mb="$3">
-          <FormControl flex={1} isRequired>
-            <FormControlLabel mb="$2">
-              <FormControlLabelText size="sm" color="$textDark800">Expiry</FormControlLabelText>
-            </FormControlLabel>
-            <Input variant="outline" size="md" borderRadius="$lg">
-              <InputField 
-                placeholder="MM/YY"
-                value={expiry}
-                onChangeText={handleExpiryChange}
-                keyboardType="numeric"
-                maxLength={5}
-                autoCapitalize="none"
-              />
-            </Input>
-          </FormControl>
-
-          <FormControl flex={1} isRequired>
-            <FormControlLabel mb="$2">
-              <FormControlLabelText size="sm" color="$textDark800">CVC</FormControlLabelText>
-            </FormControlLabel>
-            <Input variant="outline" size="md" borderRadius="$lg">
-              <InputField 
-                placeholder="123"
-                value={cvc}
-                onChangeText={handleCvcChange}
-                secureTextEntry={!showCvc}
-                keyboardType="numeric"
-                maxLength={4}
-                autoCapitalize="none"
-              />
-              <InputSlot pr="$3" onPress={() => setShowCvc(!showCvc)}>
-                <InputIcon as={showCvc ? EyeOff : Eye} size="sm" color="$textDark500" />
-              </InputSlot>
-            </Input>
-          </FormControl>
-        </HStack>
 
         <FormControl isRequired mb="$3">
           <FormControlLabel mb="$2">
@@ -244,10 +181,13 @@ const StripeCheckout: React.FC<StripeCheckoutProps> = ({
           bg="$primary500" 
           flex={1}
           onPress={handlePayment}
-          isLoading={isLoading}
-          isDisabled={isLoading}
+          disabled={isLoading}
         >
-          <ButtonText color="$textLight50" fontWeight="$medium">Pay ${amount.toFixed(2)}</ButtonText>
+          {isLoading ? (
+            <ButtonText color="$textLight50" fontWeight="$medium">Processing...</ButtonText>
+          ) : (
+            <ButtonText color="$textLight50" fontWeight="$medium">Pay ${amount.toFixed(2)}</ButtonText>
+          )}
         </Button>
       </HStack>
     </VStack>

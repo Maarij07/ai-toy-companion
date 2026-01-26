@@ -201,7 +201,7 @@ const SignupScreen: React.FC<SignupScreenProps> = ({
         <Box p="$4" justifyContent="center" flex={1}>
           <Center mb="$8">
             <Image 
-              source={require('../public/logo.png')} 
+              source={require('src/public/logo.png')} 
               alt="Logo"
               style={{ width: 80, height: 80, marginBottom: 16 }}
             />

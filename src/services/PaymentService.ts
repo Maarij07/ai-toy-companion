@@ -15,70 +15,125 @@ interface PaymentIntentResponse {
  * PaymentService
  * 
  * This service handles payment operations in the application.
- * In a production environment, sensitive payment operations would be handled
- * securely on a backend server to protect payment information.
- * This implementation simulates the payment flow for demonstration purposes.
+ * All sensitive payment operations are handled server-side via Supabase Edge Functions
+ * to protect payment information and Stripe secrets.
  */
 
 class PaymentService {
-  // Stripe publishable key - in a real app, this would come from environment/config
-  static STRIPE_PUBLISHABLE_KEY = process.env.STRIPE_PUBLISHABLE_KEY || 'pk_test_your_stripe_publishable_key_here';
-  
-  // Note: Actual Stripe integration would require backend implementation
-  // This is a frontend placeholder that simulates Stripe API calls
+  // Base URL for Supabase Edge Functions
+  static SUPABASE_FUNCTIONS_BASE_URL = `${process.env.EXPO_PUBLIC_SUPABASE_URL}/functions/v1`;
   
   /**
-   * Creates a payment intent with Stripe
+   * Creates a payment intent with Stripe via Supabase Edge Function
    */
   static async createPaymentIntent(params: CreatePaymentIntentParams): Promise<PaymentIntentResponse> {
-    // In a real app, this would be handled server-side for security
-    // For now, we'll simulate the response
-    console.log('Creating payment intent with params:', params);
-    
-    // Simulate API delay
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    
-    // Mock response - in a real app, this would come from your backend
-    return {
-      client_secret: 'pi_mock_client_secret_' + Math.random().toString(36).substring(2, 15),
-      id: 'pi_mock_' + Math.random().toString(36).substring(2, 15),
-      status: 'requires_payment_method'
-    };
+    try {
+      // Call Supabase Edge Function to create payment intent
+      const response = await fetch(`${this.SUPABASE_FUNCTIONS_BASE_URL}/create-payment-intent`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${await this.getSupabaseAuthToken()}`,
+          'apikey': process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || ''
+        },
+        body: JSON.stringify(params)
+      });
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Failed to create payment intent: ${response.statusText}. Details: ${errorText}`);
+      }
+      
+      const result = await response.json();
+      
+      // Return the payment intent data from Supabase Edge Function
+      return {
+        client_secret: result.client_secret,
+        id: result.id,
+        status: result.status
+      };
+    } catch (error) {
+      console.error('Error creating payment intent:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Gets Supabase authentication token for API calls
+   */
+  static async getSupabaseAuthToken(): Promise<string> {
+    // In a real app, this would get the user's Supabase session token
+    // This would typically involve importing supabase from '../config/supabase' and getting the session
+    const { data: { session } } = await (await import('../config/supabase')).supabase.auth.getSession();
+    return session?.access_token || '';
   }
 
   /**
    * Confirm a payment intent after collecting payment details
+   * Note: Payment confirmation happens via Supabase Edge Function
    */
   static async confirmPaymentIntent(paymentIntentId: string): Promise<any> {
-    console.log('Confirming payment intent:', paymentIntentId);
-    
-    // Simulate API delay
-    await new Promise(resolve => setTimeout(resolve, 1500));
-    
-    // Mock response
-    return {
-      status: 'succeeded',
-      payment_intent_id: paymentIntentId
-    };
+    try {
+      // Call Supabase Edge Function to confirm the payment
+      const response = await fetch(`${this.SUPABASE_FUNCTIONS_BASE_URL}/confirm-payment`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${await this.getSupabaseAuthToken()}`,
+          'apikey': process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || ''
+        },
+        body: JSON.stringify({
+          payment_intent_id: paymentIntentId
+        })
+      });
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Failed to confirm payment: ${response.statusText}. Details: ${errorText}`);
+      }
+      
+      const result = await response.json();
+      
+      return result;
+    } catch (error) {
+      console.error('Error confirming payment intent:', error);
+      throw error;
+    }
   }
 
   /**
-   * Process a refund for an order
+   * Process a refund for an order via Supabase Edge Function
    */
   static async processRefund(
     paymentIntentId: string, 
     reason?: 'duplicate' | 'fraudulent' | 'requested_by_customer' | 'other'
   ): Promise<any> {
-    console.log('Processing refund for:', paymentIntentId, 'reason:', reason);
-    
-    // Simulate API delay
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    
-    return {
-      id: 're_' + Math.random().toString(36).substring(2, 15),
-      status: 'succeeded',
-      payment_intent: paymentIntentId
-    };
+    try {
+      const response = await fetch(`${this.SUPABASE_FUNCTIONS_BASE_URL}/process-refund`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${await this.getSupabaseAuthToken()}`,
+          'apikey': process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || ''
+        },
+        body: JSON.stringify({
+          payment_intent_id: paymentIntentId,
+          reason: reason
+        })
+      });
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Failed to process refund: ${response.statusText}. Details: ${errorText}`);
+      }
+      
+      const result = await response.json();
+      
+      return result;
+    } catch (error) {
+      console.error('Error processing refund:', error);
+      throw error;
+    }
   }
 
   /**

@@ -44,6 +44,14 @@ function App() {
       
       try {
         // Check for existing session
+        // Check if AuthService is properly imported
+        if (!AuthService || typeof AuthService.getSession !== 'function') {
+          console.error('AuthService is not properly loaded. Using fallback behavior.');
+          setCurrentScreen('login');
+          setIsInitializing(false);
+          return;
+        }
+        
         const { data: sessionData, error: sessionError } = await AuthService.getSession();
         
         if (sessionData?.session && !sessionError) {

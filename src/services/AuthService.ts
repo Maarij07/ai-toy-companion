@@ -1,5 +1,10 @@
 import { supabase } from '../config/supabase';
 
+// Validate that supabase client is properly initialized
+if (!supabase) {
+  console.error('Supabase client is not properly initialized. Please check your environment variables.');
+}
+
 export class AuthService {
   // Sign up a new user
   static async signUp(email: string, password: string, fullName: string) {

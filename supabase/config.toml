@@ -1,0 +1,11 @@
+# Supabase Config File
+# Reference: https://supabase.com/docs/guides/functions/config
+
+[functions.create-payment-intent]
+verify_jwt = true
+
+[functions.confirm-payment]
+verify_jwt = true
+
+[functions.process-refund]
+verify_jwt = true
