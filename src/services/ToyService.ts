@@ -186,3 +186,6 @@ export class ToyService {
     }
   }
 }
+
+// Also export as default for compatibility
+export default ToyService;

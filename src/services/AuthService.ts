@@ -17,6 +17,7 @@ export class AuthService {
   // Sign up a new user
   static async signUp(email: string, password: string, fullName: string) {
     try {
+      console.log('Attempting to sign up user:', email);
       const { data, error } = await supabase.auth.signUp({
         email,
         password,
@@ -27,21 +28,27 @@ export class AuthService {
         },
       });
 
-      if (error) throw error;
+      if (error) {
+        console.error('Supabase auth error:', error);
+        console.error('Error message:', error.message);
+        console.error('Error code:', error.code);
+        throw error;
+      }
       
-      // Also create profile record
+      console.log('Auth signup successful, user data:', data.user?.id);
+      
+      // Profile should be created automatically by the database trigger
       if (data.user) {
-        await supabase.from('profiles').insert([
-          {
-            id: data.user.id,
-            email: email,
-            full_name: fullName,
-          },
-        ]);
+        console.log('User signed up, profile should be created by trigger:', data.user.id);
+        // Temporarily skip profile creation to test if the trigger is the issue
+        console.log('Skipping profile creation for testing');
+      } else {
+        console.warn('No user data returned from signup');
       }
 
       return { data, error: null };
     } catch (error: any) {
+      console.error('Signup error caught in AuthService:', error);
       return { data: null, error };
     }
   }
