@@ -14,7 +14,19 @@ import { GluestackUIProvider } from '@gluestack-ui/themed';
 import customConfig from './src/config/theme';
 
 // Supabase services
-import { AuthService } from './src/services';
+import AuthService from './src/services/AuthService';
+
+// Debug logging
+console.log('AuthService imported:', AuthService);
+
+// Test AuthService
+if (AuthService && typeof AuthService === 'function') {
+  console.log('AuthService is a function');
+} else if (AuthService && typeof AuthService === 'object') {
+  console.log('AuthService is an object with methods:', Object.keys(AuthService));
+} else {
+  console.log('AuthService is undefined or invalid');
+}
 
 
 

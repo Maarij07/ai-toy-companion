@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Alert, Platform, Image, ScrollView } from 'react-native';
 
 // Supabase services
-import { AuthService } from '../services';
+import AuthService from '../services/AuthService';
 import { 
   Box, 
   Text, 

@@ -8,7 +8,8 @@ import {
 } from 'react-native';
 
 // Supabase services
-import { ToyService, AuthService } from '../services';
+import ToyService from '../services/ToyService';
+import AuthService from '../services/AuthService';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { 
   Box, 

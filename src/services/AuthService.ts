@@ -1,9 +1,17 @@
 import { supabase } from '../config/supabase';
 
+console.log('AuthService module loaded, supabase client:', supabase);
+
 // Validate that supabase client is properly initialized
 if (!supabase) {
   console.error('Supabase client is not properly initialized. Please check your environment variables.');
 }
+
+// Simple test function to verify the module is working
+export const testAuthService = () => {
+  console.log('AuthService test function called');
+  return 'AuthService is working';
+};
 
 export class AuthService {
   // Sign up a new user

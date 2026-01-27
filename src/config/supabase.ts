@@ -1,8 +1,14 @@
 import { createClient } from '@supabase/supabase-js';
 
-// Get environment variables
-const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL!;
-const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY!;
+console.log('Supabase config loading...');
+console.log('EXPO_PUBLIC_SUPABASE_URL:', process.env.EXPO_PUBLIC_SUPABASE_URL);
+console.log('EXPO_PUBLIC_SUPABASE_ANON_KEY:', process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY);
+
+// Hardcoded Supabase credentials
+const supabaseUrl = 'https://hshnsjiewmgwjjpzrclu.supabase.co';
+const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhzaG5zamlld21nd2pqcHpyY2x1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjgyNTg0NzgsImV4cCI6MjA4MzgzNDQ3OH0.08vthL3XzN-VNHbUEccgYqUE9-FvMEZDeVTCedRAsPM';
+
+console.log('Using hardcoded Supabase URL:', supabaseUrl);
 
 // Create Supabase client
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {

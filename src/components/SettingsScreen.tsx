@@ -5,7 +5,7 @@ import {
 } from 'react-native';
 
 // Supabase services
-import { AuthService } from '../services';
+import AuthService from '../services/AuthService';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { 
   Box, 
