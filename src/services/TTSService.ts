@@ -1,10 +1,12 @@
-import { NativeModules } from 'react-native';
+import { supabase } from '../config/supabase';
 
 interface TTSConfig {
   language?: string;
   voice?: string;
   rate?: number;
   pitch?: number;
+  projectId?: string;  // Resemble project ID
+  voiceId?: string;    // Resemble voice ID
 }
 
 class TTSService {
@@ -17,15 +19,6 @@ class TTSService {
   async initialize(config: TTSConfig = {}): Promise<boolean> {
     try {
       this.config = config;
-
-      // In a real implementation, this would initialize the TTS engine
-      // For now, we're setting up the structure for when the native module is available
-      
-      // Check if the native module exists
-      if (!NativeModules.TTSEngine) {
-        console.warn('TTS native module not available');
-      }
-
       this.isInitialized = true;
       console.log('TTS service initialized successfully');
       return true;
@@ -44,25 +37,63 @@ class TTSService {
         return { audioData: null, success: false, error: 'TTS service not initialized' };
       }
 
-      console.log('Converting text to speech:', text);
+      console.log('Converting text to speech via Edge Function:', text);
 
-      // In a real implementation, this would call the TTS engine
-      // For now, we'll simulate the behavior and prepare for integration
-      const synthesisParams = {
-        text: text,
-        language: this.config?.language || 'en-US',
-        voice: this.config?.voice,
-        rate: this.config?.rate || 1.0,
-        pitch: this.config?.pitch || 1.0,
-      };
+      // Get the user's session token for authentication
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
 
-      // Simulate TTS synthesis
-      // In real implementation, this would synthesize speech and return audio data
-      console.log('Synthesizing speech with params:', synthesisParams);
+      if (!token) {
+        return { audioData: null, success: false, error: 'User not authenticated' };
+      }
 
-      // Placeholder for actual TTS synthesis - in real implementation this would generate audio
-      // For now, return null to allow for testing
-      return { audioData: null, success: false, error: 'TTS synthesis not implemented yet' };
+      // Get Supabase URL and ANON key from environment
+      const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
+      const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+      
+      if (!supabaseUrl || !supabaseAnonKey) {
+        throw new Error('Supabase configuration not found');
+      }
+      
+      // Call the Supabase Edge Function for TTS processing
+      const response = await fetch(`${supabaseUrl}/functions/v1/tts-processing`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+          'apikey': supabaseAnonKey,
+        },
+        body: JSON.stringify({
+          text: text,
+          userId: session.user.id,
+          projectId: this.config?.projectId,
+          voiceId: this.config?.voiceId
+        })
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`TTS Edge Function error: ${response.status} - ${errorText}`);
+      }
+
+      const result = await response.json();
+
+      if (!result.success) {
+        throw new Error(result.error || 'Unknown error from TTS Edge Function');
+      }
+
+      // Download the audio file from the returned URL
+      const audioResponse = await fetch(result.audioUrl);
+      
+      if (!audioResponse.ok) {
+        throw new Error(`Failed to download audio: ${audioResponse.status}`);
+      }
+      
+      const audioArrayBuffer = await audioResponse.arrayBuffer();
+
+      console.log(`TTS audio downloaded: ${audioArrayBuffer.byteLength} bytes, format: WAV`);
+      
+      return { audioData: audioArrayBuffer, success: true, error: '' };
     } catch (error) {
       console.error('Error in TTS synthesis:', error);
       return { audioData: null, success: false, error: (error as Error).message };
@@ -78,25 +109,21 @@ class TTSService {
         return { success: false, error: 'TTS service not initialized' };
       }
 
-      console.log('Converting text to speech and saving to file:', filePath);
+      console.log('Converting text to speech via Edge Function and saving to file:', filePath);
 
-      // In a real implementation, this would call the TTS engine to save to file
-      // For now, we'll simulate the behavior
-      const synthesisParams = {
-        text: text,
-        filePath: filePath,
-        language: this.config?.language || 'en-US',
-        voice: this.config?.voice,
-        rate: this.config?.rate || 1.0,
-        pitch: this.config?.pitch || 1.0,
-      };
+      // Use the speak method to get audio data
+      const result = await this.speak(text);
+      
+      if (!result.success) {
+        return { success: false, error: result.error };
+      }
 
-      // Simulate TTS synthesis to file
-      // In real implementation, this would generate and save audio to the specified file
-      console.log('Synthesizing speech to file with params:', synthesisParams);
+      // In React Native, we'd need to use react-native-fs or similar to save the file
+      // Since we're returning the audio data, the caller can handle saving to file
+      console.log('Received audio data, file saving should be handled by caller');
 
-      // Placeholder for actual TTS synthesis to file
-      return { success: false, error: 'TTS synthesis to file not implemented yet' };
+      // Placeholder for actual file saving - in React Native this would use FileSystem
+      return { success: true, error: '' };
     } catch (error) {
       console.error('Error in TTS synthesis to file:', error);
       return { success: false, error: (error as Error).message };

@@ -196,6 +196,9 @@ const CartScreen = () => {
   
   const [showCheckoutModal, setShowCheckoutModal] = useState(false);
 
+  // Check if cart is empty after loading
+  const isEmpty = !loading && cartItems.length === 0;
+
   const renderCartItem = (item: CartItem) => (
     <Card my="$1" bg="$backgroundLight0" borderRadius="$md" borderWidth={0.5} borderColor="$borderLight300">
       <HStack p="$2" space="sm" alignItems="center">
@@ -258,33 +261,6 @@ const CartScreen = () => {
     </Card>
   );
 
-  if (cartItems.length === 0) {
-    return (
-      <SafeAreaView style={{ flex: 1, backgroundColor: '#FFFFFF' }}>
-        <VStack flex={1}>
-          {/* Sticky Header */}
-          <HStack justifyContent="space-between" alignItems="center" p="$4" bg="$backgroundLight0" borderBottomWidth={0.5} borderBottomColor="$borderLight300">
-            <Pressable p="$2">
-              <Icon as={User} size="xl" color="$textDark800" />
-            </Pressable>
-            
-            <Heading size="md" color="$textDark800">My Cart</Heading>
-            
-            <Pressable p="$2">
-              <Icon as={Bell} size="lg" color="$textDark800" />
-            </Pressable>
-          </HStack>
-          
-          <VStack flex={1} justifyContent="center" alignItems="center" px="$10">
-            <Icon as={ShoppingCart} size="5xl" color="$textDark300" mb="$4" />
-            <Heading size="lg" color="$textDark800" textAlign="center" mb="$2">Your cart is empty</Heading>
-            <Text size="md" color="$textDark500" textAlign="center">Add some toys to get started!</Text>
-          </VStack>
-        </VStack>
-      </SafeAreaView>
-    );
-  }
-
   if (loading) {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: '#FFFFFF' }}>
@@ -296,7 +272,7 @@ const CartScreen = () => {
     );
   }
   
-  if (cartItems.length === 0) {
+  if (isEmpty) {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: '#FFFFFF' }}>
         <VStack flex={1}>

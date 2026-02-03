@@ -143,6 +143,18 @@ const SetupScreen: React.FC<SetupScreenProps> = ({ onNavigateToHome }) => {
   const handleCompleteSetup = async () => {
     if (validateInputs()) {
       try {
+        console.log('AuthService:', AuthService);
+        console.log('ToyService:', ToyService);
+        
+        // Check if services are properly loaded
+        if (!AuthService || typeof AuthService.getSession !== 'function') {
+          throw new Error('AuthService is not properly loaded');
+        }
+        
+        if (!ToyService || typeof ToyService.createToy !== 'function') {
+          throw new Error('ToyService is not properly loaded');
+        }
+        
         // Get current user ID from Supabase auth
         const { data: sessionData } = await AuthService.getSession();
         if (!sessionData?.session?.user) {
@@ -411,8 +423,25 @@ const SetupScreen: React.FC<SetupScreenProps> = ({ onNavigateToHome }) => {
             </VStack>
           </ScrollView>
 
-          {/* Complete Setup Button */}
+          {/* Skip and Complete Setup Buttons */}
           <Box p="$4" bg="$backgroundLight0">
+            <Button 
+              variant="outline"
+              borderColor="$borderLight300" 
+              bg="$backgroundLight0"
+              py="$3" 
+              h="$12" 
+              borderRadius="$lg" 
+              onPress={() => onNavigateToHome && onNavigateToHome()} 
+              alignItems="center"
+              justifyContent="center"
+              mb="$3"
+            >
+              <ButtonText color="$textDark800" fontWeight="$medium" textAlign="center">
+                Skip Setup
+              </ButtonText>
+            </Button>
+            
             <Button 
               bg="$primary500" 
               py="$3" 

@@ -7,9 +7,6 @@ import TTSService from './TTSService';
 interface VoiceProcessingConfig {
   whisperModelPath?: string;
   googleApiKey?: string;
-  llmApiKey?: string;
-  llmProvider?: 'openai' | 'anthropic' | 'google' | 'custom';
-  llmModel?: string;
   ttsLanguage?: string;
   esp32ServiceUUID: string;
 }
@@ -61,21 +58,17 @@ class VoiceProcessingService {
         );
       }
 
-      // Initialize LLM service if API key is provided
-      if (config.llmApiKey) {
-        initPromises.push(
-          this.llmService.initialize({
-            provider: config.llmProvider || 'openai',
-            apiKey: config.llmApiKey,
-            model: config.llmModel
-          })
-        );
-      }
+      // Initialize LLM service
+      initPromises.push(
+        this.llmService.initialize({})
+      );
 
       // Initialize TTS service
       initPromises.push(
         this.ttsService.initialize({
-          language: config.ttsLanguage || 'en-US'
+          language: config.ttsLanguage || 'en-US',
+          projectId: process.env.RESEMBLE_DEFAULT_PROJECT_ID,
+          voiceId: process.env.RESEMBLE_DEFAULT_VOICE_ID
         })
       );
 
@@ -134,7 +127,11 @@ class VoiceProcessingService {
       }
 
       console.log('Sending text to LLM...');
-      const llmResult = await this.llmService.getResponse(transcribedText);
+      // Pass toy personality context to the LLM
+      const llmResult = await this.llmService.getResponse(transcribedText, {
+        toyPersonality: 'You are a friendly bear toy named Buddy. Respond in a warm, caring, and child-friendly manner. Keep responses engaging but appropriate for children.',
+        conversationId: 'default-conversation-id'  // In a real app, you'd generate or track conversation IDs
+      });
 
       if (!llmResult.success) {
         return { success: false, error: llmResult.error };
@@ -160,11 +157,28 @@ class VoiceProcessingService {
         return { success: false, error: 'ESP32 not connected' };
       }
 
-      // In a real implementation, we would send the audio data to ESP32 via BLE
+      // Send the audio data to ESP32 via BLE
       console.log('Sending TTS audio to ESP32 via BLE...');
       
-      // Placeholder for sending audio to ESP32
-      // await this.bleService.writeCharacteristic(this.config.esp32ServiceUUID, 'audio_characteristic_uuid', ttsResult.audioData);
+      try {
+        // Send audio data to ESP32
+        // Check if audio data is available before sending
+        if (!ttsResult.audioData) {
+          console.error('No audio data to send to ESP32');
+          return { success: false, error: 'No audio data to send to ESP32' };
+        }
+        
+        await this.bleService.writeCharacteristic(
+          this.config.esp32ServiceUUID, 
+          'audio_characteristic_uuid', // This should be the actual characteristic UUID for audio data
+          ttsResult.audioData
+        );
+        console.log('Successfully sent audio to ESP32');
+      } catch (sendError: unknown) {
+        console.error('Error sending audio to ESP32:', sendError);
+        const errorMessage = sendError instanceof Error ? sendError.message : 'Unknown error';
+        return { success: false, error: `Failed to send audio to ESP32: ${errorMessage}` };
+      }
 
       console.log('Voice processing pipeline completed successfully');
       return { success: true, error: '' };

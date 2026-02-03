@@ -48,6 +48,7 @@ import ProductDetailScreen from './ProductDetailScreen';
 
 interface NewHomeContentProps {
   onNavigateToHome?: () => void;
+  onNavigateToAddToy?: () => void; // Function to navigate to add new toy flow
   toyDetailVisible: boolean;
   setToyDetailVisible: React.Dispatch<React.SetStateAction<boolean>>;
   selectedToy: any;
@@ -56,6 +57,7 @@ interface NewHomeContentProps {
 
 const NewHomeContent = ({ 
   onNavigateToHome, 
+  onNavigateToAddToy,
   toyDetailVisible,
   setToyDetailVisible,
   selectedToy,
@@ -195,6 +197,12 @@ const NewHomeContent = ({
             alignItems="center"
             flexDirection="row"
             justifyContent="center"
+            onPress={() => {
+              // Navigate to the toy setup flow
+              if (onNavigateToAddToy) {
+                onNavigateToAddToy();
+              }
+            }}
           >
             <Icon as={PlusCircle} size="md" color="$primary500" mr="$2" />
             <Text size="sm" fontWeight="$medium" color="$primary500">Add New Toy</Text>
@@ -403,7 +411,7 @@ const ToyDetailScreen = ({ toy, onGoBack }: { toy: any; onGoBack: () => void; })
   );
 };
 
-const HomeScreen = ({ onNavigateToHome }: { onNavigateToHome?: () => void; }) => {
+const HomeScreen = ({ onNavigateToHome, onNavigateToAddToy }: { onNavigateToHome?: () => void; onNavigateToAddToy?: () => void; }) => {
   const [activeTab, setActiveTab] = useState('Home');
   const [isNotificationDrawerVisible, setNotificationDrawerVisible] = useState(false);
   const [detailProduct, setDetailProduct] = useState<any>(null);
@@ -444,10 +452,67 @@ const HomeScreen = ({ onNavigateToHome }: { onNavigateToHome?: () => void; }) =>
               <Pressable p="$2" onPress={() => setNotificationDrawerVisible(true)}>
                 <Icon as={Bell} size="lg" color="$textDark800" />
               </Pressable>
+              
+              {/* Notification Drawer */}
+              {isNotificationDrawerVisible && (
+                <Box position="absolute" top={0} left={0} right={0} bottom={0} bg="rgba(0,0,0,0.5)" zIndex={999} justifyContent="flex-end">
+                  <Pressable flex={1} onPress={() => setNotificationDrawerVisible(false)} />
+                  <Box bg="$backgroundLight0" p="$4" borderTopLeftRadius="$lg" borderTopRightRadius="$lg">
+                    <HStack justifyContent="space-between" alignItems="center" mb="$4">
+                      <Heading size="md" color="$textDark800">Notifications</Heading>
+                      <Pressable onPress={() => setNotificationDrawerVisible(false)}>
+                        <Icon as={ChevronRight} size="lg" color="$textDark800" style={{ transform: [{ rotate: '180deg' }] }} />
+                      </Pressable>
+                    </HStack>
+                    
+                    <VStack space="md">
+                      <Pressable bg="$backgroundLight50" p="$3" borderRadius="$md" onPress={() => setNotificationDrawerVisible(false)}>
+                        <HStack alignItems="center">
+                          <Box bg="$primary200" borderRadius="$full" w="$10" h="$10" justifyContent="center" alignItems="center" mr="$3">
+                            <Icon as={MessageCircle} size="sm" color="$primary500" />
+                          </Box>
+                          <VStack flex={1}>
+                            <Text size="sm" fontWeight="$medium" color="$textDark800">New toy connection</Text>
+                            <Text size="xs" color="$textDark500">Buddy the Bear connected successfully</Text>
+                          </VStack>
+                          <Text size="xs" color="$textDark500">2 min ago</Text>
+                        </HStack>
+                      </Pressable>
+                      
+                      <Pressable bg="$backgroundLight50" p="$3" borderRadius="$md" onPress={() => setNotificationDrawerVisible(false)}>
+                        <HStack alignItems="center">
+                          <Box bg="$success200" borderRadius="$full" w="$10" h="$10" justifyContent="center" alignItems="center" mr="$3">
+                            <Icon as={Calendar} size="sm" color="$success500" />
+                          </Box>
+                          <VStack flex={1}>
+                            <Text size="sm" fontWeight="$medium" color="$textDark800">Daily reminder</Text>
+                            <Text size="xs" color="$textDark500">Time for your child's play session</Text>
+                          </VStack>
+                          <Text size="xs" color="$textDark500">1 hour ago</Text>
+                        </HStack>
+                      </Pressable>
+                      
+                      <Pressable bg="$backgroundLight50" p="$3" borderRadius="$md" onPress={() => setNotificationDrawerVisible(false)}>
+                        <HStack alignItems="center">
+                          <Box bg="$warning200" borderRadius="$full" w="$10" h="$10" justifyContent="center" alignItems="center" mr="$3">
+                            <Icon as={Shield} size="sm" color="$warning500" />
+                          </Box>
+                          <VStack flex={1}>
+                            <Text size="sm" fontWeight="$medium" color="$textDark800">Safety alert</Text>
+                            <Text size="xs" color="$textDark500">Check your child's toy settings</Text>
+                          </VStack>
+                          <Text size="xs" color="$textDark500">3 hours ago</Text>
+                        </HStack>
+                      </Pressable>
+                    </VStack>
+                  </Box>
+                </Box>
+              )}
             </HStack>
             
             <NewHomeContent 
               onNavigateToHome={onNavigateToHome}
+              onNavigateToAddToy={onNavigateToAddToy}
               toyDetailVisible={toyDetailVisible}
               setToyDetailVisible={setToyDetailVisible}
               selectedToy={selectedToy}

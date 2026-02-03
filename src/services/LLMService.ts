@@ -1,8 +1,7 @@
-import { NativeModules } from 'react-native';
+import { supabase } from '../config/supabase';
 
 interface LLMConfig {
-  provider: 'openai' | 'anthropic' | 'google' | 'custom';
-  apiKey: string;
+  provider?: 'openai' | 'anthropic' | 'google' | 'custom';
   model?: string;
   baseURL?: string;
 }
@@ -17,15 +16,6 @@ class LLMService {
   async initialize(config: LLMConfig): Promise<boolean> {
     try {
       this.config = config;
-
-      // In a real implementation, this would initialize the LLM provider
-      // For now, we're setting up the structure for when the native module is available
-      
-      // Check if the native module exists
-      if (!NativeModules.LLMModule) {
-        console.warn('LLM native module not available');
-      }
-
       this.isInitialized = true;
       console.log('LLM service initialized successfully');
       return true;
@@ -40,33 +30,57 @@ class LLMService {
    */
   async getResponse(inputText: string, context?: any): Promise<{ response: string; success: boolean; error: string }> {
     try {
-      if (!this.isInitialized || !this.config) {
+      if (!this.isInitialized) {
         return { response: '', success: false, error: 'LLM service not initialized' };
       }
 
-      console.log('Sending text to LLM:', inputText);
+      console.log('Sending text to LLM Edge Function:', inputText);
 
-      // In a real implementation, this would call the LLM API
-      // For now, we'll simulate the behavior and prepare for integration
-      const requestBody = {
-        model: this.config.model || 'gpt-3.5-turbo',
-        messages: [
-          {
-            role: 'user',
-            content: inputText
-          }
-        ],
-        temperature: 0.7,
-        max_tokens: 150
-      };
+      // Get the user's session token for authentication
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
 
-      // Simulate API call to LLM provider
-      // In real implementation, this would make an HTTP request to the LLM API
-      console.log('Sending request to LLM API');
+      if (!token) {
+        return { response: '', success: false, error: 'User not authenticated' };
+      }
 
-      // Placeholder for actual API call - in real implementation this would be an HTTP request
-      // For now, return a simulated response to allow for testing
-      return { response: '', success: false, error: 'LLM API not implemented yet' };
+      // Get Supabase URL and ANON key from environment
+      const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
+      const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+      
+      if (!supabaseUrl || !supabaseAnonKey) {
+        throw new Error('Supabase configuration not found');
+      }
+      
+      // Call the Supabase Edge Function for LLM processing
+      const response = await fetch(`${supabaseUrl}/functions/v1/llm-processing`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+          'apikey': supabaseAnonKey,
+        },
+        body: JSON.stringify({
+          prompt: inputText,
+          userId: session.user.id,
+          conversationId: context?.conversationId || null,
+          toyPersonality: context?.toyPersonality || null,
+          context: context?.generalContext || null
+        })
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`LLM Edge Function error: ${response.status} - ${errorText}`);
+      }
+
+      const result = await response.json();
+
+      if (!result.success) {
+        throw new Error(result.error || 'Unknown error from LLM Edge Function');
+      }
+
+      return { response: result.response, success: true, error: '' };
     } catch (error) {
       console.error('Error in LLM processing:', error);
       return { response: '', success: false, error: (error as Error).message };

@@ -161,6 +161,26 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+-- Function to automatically create profile when user signs up
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS TRIGGER AS $$
+DECLARE
+  user_full_name TEXT;
+BEGIN
+  -- Extract full_name from raw_user_meta_data, with fallback to email
+  user_full_name := COALESCE(NEW.raw_user_meta_data->>'full_name', NEW.email);
+  
+  INSERT INTO public.profiles (id, email, full_name)
+  VALUES (NEW.id, NEW.email, user_full_name);
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Trigger to automatically create profile when user signs up
+CREATE TRIGGER on_auth_user_created
+  AFTER INSERT ON auth.users
+  FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
+
 -- Attach the trigger to tables that need updated_at
 CREATE TRIGGER handle_profiles_updated_at 
   BEFORE UPDATE ON profiles 
@@ -178,7 +198,44 @@ CREATE TRIGGER handle_orders_updated_at
   BEFORE UPDATE ON orders 
   FOR EACH ROW EXECUTE FUNCTION public.handle_updated_at();
 
--- 10. Insert sample data for products
+-- 10. LLM Interactions Table
+CREATE TABLE llm_interactions (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+  conversation_id UUID,
+  prompt TEXT NOT NULL,
+  response TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Enable RLS for LLM interactions
+ALTER TABLE llm_interactions ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Users can view own LLM interactions" ON llm_interactions FOR SELECT
+  USING (auth.uid() = user_id OR user_id IS NULL);
+CREATE POLICY "Users can insert own LLM interactions" ON llm_interactions FOR INSERT
+  WITH CHECK (auth.uid() = user_id OR user_id IS NULL);
+
+-- 11. TTS Requests Table
+CREATE TABLE tts_requests (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+  text TEXT NOT NULL,
+  voice_id TEXT,
+  project_id TEXT,
+  audio_url TEXT,
+  status TEXT,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Enable RLS for TTS requests
+ALTER TABLE tts_requests ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Users can view own TTS requests" ON tts_requests FOR SELECT
+  USING (auth.uid() = user_id OR user_id IS NULL);
+CREATE POLICY "Users can insert own TTS requests" ON tts_requests FOR INSERT
+  WITH CHECK (auth.uid() = user_id OR user_id IS NULL);
+
+-- 12. Insert sample data for products
 INSERT INTO products (name, description, price, original_price, image_url, rating, review_count, category, discount_percent, badge, brand, age_range, features) VALUES
 ('Buddy the Bear', 'An interactive AI-powered teddy bear that provides companionship and educational entertainment for children. With advanced voice recognition and emotional intelligence, Buddy can engage in meaningful conversations and adapt to your child''s personality.', 89.99, 119.99, 'https://images.unsplash.com/photo-1542282088-72c9c27ed0cd?w=400&q=80', 4.8, 124, 'Toys', 25, 'Popular', 'AI Toys Co.', 'Ages 3-7', ARRAY['AI-Powered', 'Safe Materials']),
 ('Smart Elephant', 'A wise and interactive elephant toy that teaches children about animals, nature, and conservation. Features touch sensors, voice recognition, and multiple educational games.', 69.99, 89.99, 'https://images.unsplash.com/photo-1547471080-7cc2caa01a7e?w=400&q=80', 4.6, 89, 'Toys', 22, 'Sale', 'Smart Toys', 'Ages 4-8', ARRAY['AI-Powered', 'Educational']),

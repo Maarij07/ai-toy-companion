@@ -122,16 +122,30 @@ class BLEService {
     }
   }
 
-  async writeCharacteristic(serviceUUID: string, characteristicUUID: string, data: string): Promise<void> {
+  async writeCharacteristic(serviceUUID: string, characteristicUUID: string, data: string | ArrayBuffer): Promise<void> {
     if (!this.isConnected || !this.device) {
       throw new Error('Device not connected');
     }
 
     try {
+      let dataToSend: string;
+      
+      if (data instanceof ArrayBuffer) {
+        // Convert ArrayBuffer to base64 string for BLE transmission
+        const uint8Array = new Uint8Array(data);
+        let binary = '';
+        for (let i = 0; i < uint8Array.byteLength; i++) {
+          binary += String.fromCharCode(uint8Array[i]);
+        }
+        dataToSend = btoa(binary);
+      } else {
+        dataToSend = data;
+      }
+      
       await this.device.writeCharacteristicWithResponseForService(
         serviceUUID,
         characteristicUUID,
-        data
+        dataToSend
       );
     } catch (error) {
       console.error('Error writing to characteristic:', error);

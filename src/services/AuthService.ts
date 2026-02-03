@@ -35,13 +35,39 @@ export class AuthService {
         throw error;
       }
       
-      console.log('Auth signup successful, user data:', data.user?.id);
+      console.log('Auth signup successful, user data:', data?.user?.id);
       
       // Profile should be created automatically by the database trigger
-      if (data.user) {
+      if (data && data.user) {
         console.log('User signed up, profile should be created by trigger:', data.user.id);
-        // Temporarily skip profile creation to test if the trigger is the issue
-        console.log('Skipping profile creation for testing');
+        
+        // Wait briefly to allow trigger to create profile
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        // Verify profile was created, if not create it explicitly
+        const { data: profileData, error: profileError } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', data.user.id)
+          .single();
+        
+        if (profileError) {
+          // If profile wasn't created by trigger, create it explicitly
+          console.log('Profile not found, creating explicitly');
+          const { error: createProfileError } = await supabase
+            .from('profiles')
+            .insert([
+              {
+                id: data.user.id,
+                email: data.user.email,
+                full_name: fullName,
+              }
+            ]);
+            
+          if (createProfileError) {
+            console.error('Error creating profile:', createProfileError);
+          }
+        }
       } else {
         console.warn('No user data returned from signup');
       }

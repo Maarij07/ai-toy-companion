@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Alert, Platform, Image, ScrollView } from 'react-native';
 
 // Supabase services
-import AuthService from '../services/AuthService';
+import AuthService from '../services/AuthServiceManual';
 import { 
   Box, 
   Text, 
@@ -63,13 +63,8 @@ const SignupScreen: React.FC<SignupScreenProps> = ({
   };
 
   const validatePassword = (password: string) => {
-    // At least 8 characters, 1 uppercase, 1 lowercase, 1 number
-    const hasMinLength = password.length >= 8;
-    const hasLowercase = /[a-z]/.test(password);
-    const hasUppercase = /[A-Z]/.test(password);
-    const hasNumber = /\d/.test(password);
-    
-    return hasMinLength && hasLowercase && hasUppercase && hasNumber;
+    // At least 6 characters
+    return password.length >= 6;
   };
 
   const handleSignup = async () => {
@@ -104,7 +99,7 @@ const SignupScreen: React.FC<SignupScreenProps> = ({
       newErrors.password = 'Password is required';
       hasError = true;
     } else if (!validatePassword(password)) {
-      newErrors.password = 'Password must be at least 8 chars with uppercase, lowercase, and number';
+      newErrors.password = 'Password must be at least 6 characters';
       hasError = true;
     }
 
@@ -127,7 +122,10 @@ const SignupScreen: React.FC<SignupScreenProps> = ({
         const { data, error } = await AuthService.signUp(email, password, name);
         
         if (error) {
-          console.error('Signup error:', error);
+          console.error('Signup error in SignupScreen:', error);
+          console.error('Error message:', error.message);
+          console.error('Error status:', error.status);
+          console.error('Error details:', error.details);
           Alert.alert('Sign Up Failed', error.message || 'Failed to create account. Please try again.');
           return;
         }
@@ -139,7 +137,9 @@ const SignupScreen: React.FC<SignupScreenProps> = ({
           onNavigateToOnboarding();
         }
       } catch (error: any) {
-        console.error('Signup error:', error);
+        console.error('Signup error in catch block:', error);
+        console.error('Error message:', error.message);
+        console.error('Error stack:', error.stack);
         Alert.alert('Sign Up Failed', 'Failed to create account. Please try again.');
       } finally {
         setIsLoading(false);
