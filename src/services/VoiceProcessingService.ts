@@ -6,7 +6,6 @@ import TTSService from './TTSService';
 
 interface VoiceProcessingConfig {
   whisperModelPath?: string;
-  googleApiKey?: string;
   ttsLanguage?: string;
   esp32ServiceUUID: string;
 }
@@ -48,27 +47,22 @@ class VoiceProcessingService {
         );
       }
 
-      // Initialize Google STT if API key is provided
-      if (config.googleApiKey) {
-        initPromises.push(
-          this.googleSTTService.initialize({
-            apiKey: config.googleApiKey,
-            languageCode: 'en-US'
-          })
-        );
-      }
+      // Initialize Google STT (uses edge function, no client-side key needed)
+      initPromises.push(
+        this.googleSTTService.initialize({
+          languageCode: 'en-US'
+        })
+      );
 
       // Initialize LLM service
       initPromises.push(
         this.llmService.initialize({})
       );
 
-      // Initialize TTS service
+      // Initialize TTS service (uses edge function, project/voice IDs are server-side)
       initPromises.push(
         this.ttsService.initialize({
           language: config.ttsLanguage || 'en-US',
-          projectId: process.env.RESEMBLE_DEFAULT_PROJECT_ID,
-          voiceId: process.env.RESEMBLE_DEFAULT_VOICE_ID
         })
       );
 
