@@ -183,6 +183,117 @@ class BLEService {
     }
   }
 
+  /**
+   * Subscribe to audio chunks from toy microphone
+   */
+  async subscribeToAudioChunks(
+    serviceUUID: string,
+    audioCharacteristicUUID: string,
+    onChunkReceived: (chunk: ArrayBuffer) => void,
+    onComplete: () => void
+  ): Promise<void> {
+    if (!this.isConnected || !this.device) {
+      throw new Error('Device not connected');
+    }
+
+    try {
+      this.device.monitorCharacteristicForService(
+        serviceUUID,
+        audioCharacteristicUUID,
+        (error, characteristic) => {
+          if (error) {
+            console.error('Error monitoring audio characteristic:', error);
+            return;
+          }
+
+          if (characteristic?.value) {
+            // Decode base64 to ArrayBuffer
+            const base64Data = characteristic.value;
+            const binaryString = atob(base64Data);
+            const bytes = new Uint8Array(binaryString.length);
+            for (let i = 0; i < binaryString.length; i++) {
+              bytes[i] = binaryString.charCodeAt(i);
+            }
+            
+            // Check for end-of-stream marker (you can customize this)
+            const isEndMarker = bytes.length === 4 && 
+                               bytes[0] === 0xFF && 
+                               bytes[1] === 0xFF && 
+                               bytes[2] === 0xFF && 
+                               bytes[3] === 0xFF;
+            
+            if (isEndMarker) {
+              onComplete();
+            } else {
+              onChunkReceived(bytes.buffer);
+            }
+          }
+        }
+      );
+    } catch (error) {
+      console.error('Error subscribing to audio chunks:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Send audio chunks to toy speaker
+   */
+  async sendAudioChunks(
+    serviceUUID: string,
+    audioCharacteristicUUID: string,
+    audioData: ArrayBuffer,
+    chunkSize: number = 512
+  ): Promise<void> {
+    if (!this.isConnected || !this.device) {
+      throw new Error('Device not connected');
+    }
+
+    try {
+      const uint8Array = new Uint8Array(audioData);
+      const totalChunks = Math.ceil(uint8Array.length / chunkSize);
+
+      for (let i = 0; i < totalChunks; i++) {
+        const start = i * chunkSize;
+        const end = Math.min(start + chunkSize, uint8Array.length);
+        const chunk = uint8Array.slice(start, end);
+
+        // Convert to base64 for BLE transmission
+        let binary = '';
+        for (let j = 0; j < chunk.length; j++) {
+          binary += String.fromCharCode(chunk[j]);
+        }
+        const base64Chunk = btoa(binary);
+
+        await this.device.writeCharacteristicWithResponseForService(
+          serviceUUID,
+          audioCharacteristicUUID,
+          base64Chunk
+        );
+
+        // Small delay between chunks to prevent overwhelming the device
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+
+      // Send end-of-stream marker
+      const endMarker = new Uint8Array([0xFF, 0xFF, 0xFF, 0xFF]);
+      let binary = '';
+      for (let i = 0; i < endMarker.length; i++) {
+        binary += String.fromCharCode(endMarker[i]);
+      }
+      await this.device.writeCharacteristicWithResponseForService(
+        serviceUUID,
+        audioCharacteristicUUID,
+        btoa(binary)
+      );
+
+      console.log(`Sent ${totalChunks} audio chunks to toy`);
+    } catch (error) {
+      console.error('Error sending audio chunks:', error);
+      throw error;
+    }
+  }
+
   getManager(): BleManager {
     return this.manager;
   }

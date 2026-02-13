@@ -47,21 +47,17 @@ class TTSService {
         return { audioData: null, success: false, error: 'User not authenticated' };
       }
 
-      // Get Supabase URL and ANON key from environment
-      const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
-      const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+      // Get Supabase config from supabase client (no local env)
+      const supabaseUrl = supabase.supabaseUrl;
+      const supabaseKey = supabase.supabaseKey;
       
-      if (!supabaseUrl || !supabaseAnonKey) {
-        throw new Error('Supabase configuration not found');
-      }
-      
-      // Call the Supabase Edge Function for TTS processing
+      // Call the Supabase Edge Function for TTS processing (Resemble)
       const response = await fetch(`${supabaseUrl}/functions/v1/tts-processing`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`,
-          'apikey': supabaseAnonKey,
+          'apikey': supabaseKey,
         },
         body: JSON.stringify({
           text: text,

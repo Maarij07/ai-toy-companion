@@ -44,21 +44,17 @@ class LLMService {
         return { response: '', success: false, error: 'User not authenticated' };
       }
 
-      // Get Supabase URL and ANON key from environment
-      const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
-      const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+      // Get Supabase config from supabase client (no local env)
+      const supabaseUrl = supabase.supabaseUrl;
+      const supabaseKey = supabase.supabaseKey;
       
-      if (!supabaseUrl || !supabaseAnonKey) {
-        throw new Error('Supabase configuration not found');
-      }
-      
-      // Call the Supabase Edge Function for LLM processing
+      // Call the Supabase Edge Function for LLM processing (Gemini)
       const response = await fetch(`${supabaseUrl}/functions/v1/llm-processing`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`,
-          'apikey': supabaseAnonKey,
+          'apikey': supabaseKey,
         },
         body: JSON.stringify({
           prompt: inputText,

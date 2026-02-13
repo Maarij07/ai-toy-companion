@@ -35,12 +35,9 @@ class GoogleSTTService {
         return { text: '', success: false, error: 'User not authenticated' };
       }
 
-      const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
-      const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
-
-      if (!supabaseUrl || !supabaseAnonKey) {
-        throw new Error('Supabase configuration not found');
-      }
+      // Get Supabase config from supabase client (no local env)
+      const supabaseUrl = supabase.supabaseUrl;
+      const supabaseKey = supabase.supabaseKey;
 
       // Convert audio to base64 for transmission
       let audioContent: string;
@@ -60,7 +57,7 @@ class GoogleSTTService {
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`,
-          'apikey': supabaseAnonKey,
+          'apikey': supabaseKey,
         },
         body: JSON.stringify({
           audio: audioContent,

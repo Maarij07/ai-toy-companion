@@ -81,41 +81,50 @@ Three Edge Functions handle Stripe operations:
 
 \section{AI Service Integrations}
 
+\subsection{AI Service Integrations}
+
 \subsection{Current Implementation}
 \begin{itemize}
-    \item \textbf{LLM (Large Language Model)}: Cloud-based processing (Implementation ready, awaiting API key configuration)
-    \item \textbf{TTS (Text-to-Speech)}: Cloud-based processing (Implementation ready, awaiting API key configuration)
-    \item \textbf{STT (Speech-to-Text)}: Mobile app-side processing (Implementation ready, awaiting API key configuration)
-    \item \textbf{Whisper.cpp}: Mobile app-side processing (Implementation ready, awaiting API key configuration)
+    \item \textbf{STT (Speech-to-Text)}: Google Speech-to-Text API via Supabase Edge Function
+    \item \textbf{LLM (Large Language Model)}: Google Gemini API via Supabase Edge Function
+    \item \textbf{TTS (Text-to-Speech)}: Resemble AI API via Supabase Edge Function
+    \item \textbf{All API Keys}: Stored securely in Supabase Edge Function environment variables
 \end{itemize}
 
-\subsection{STT/Whisper Implementation}
-Currently, STT and Whisper processing happens on the mobile device:
+\subsection{Audio Processing Architecture}
+The audio processing happens in a distributed manner:
 \begin{itemize}
-    \item Audio captured on mobile device
-    \item Processed locally via Whisper.cpp
-    \item Transcribed text sent to LLM for processing
-    \item Response converted to speech via TTS
+    \item \textbf{Recording}: Toy microphone captures audio
+    \item \textbf{Transmission}: WAV chunks sent to mobile app via Bluetooth
+    \item \textbf{STT Processing}: Mobile app sends audio to Supabase Edge Function (Google STT)
+    \item \textbf{LLM Processing}: Transcribed text sent to Supabase Edge Function (Gemini)
+    \item \textbf{TTS Processing}: LLM response sent to Supabase Edge Function (Resemble)
+    \item \textbf{Playback}: Generated audio chunks sent back to toy speaker via Bluetooth
 \end{itemize}
 
 \section{Data Flow}
 
 \subsection{User Interaction Flow}
 \begin{enumerate}
-    \item User initiates voice command
-    \item Audio captured by mobile device
-    \item STT/Whisper processes audio to text
-    \item Text sent to LLM for processing
-    \item LLM generates response
-    \item Response converted to speech via TTS
-    \item Audio played back to user
+    \item User speaks into toy microphone
+    \item Toy captures audio and sends WAV chunks to mobile app via Bluetooth
+    \item Mobile app accumulates chunks and sends to Supabase Edge Function (STT)
+    \item Google Speech-to-Text transcribes audio to text
+    \item Text sent to Supabase Edge Function (LLM)
+    \item Google Gemini generates AI response
+    \item Response sent to Supabase Edge Function (TTS)
+    \item Resemble AI converts text to speech (WAV format)
+    \item Mobile app receives audio and sends chunks to toy via Bluetooth
+    \item Toy speaker plays audio response
 \end{enumerate}
 
 \subsection{Toy Connection Flow}
 \begin{enumerate}
-    \item Mobile app connects to toy via Bluetooth
+    \item Mobile app connects to toy via Bluetooth Low Energy (BLE)
     \item Custom personality/mode settings applied
-    \item Conversation context maintained
+    \item Mobile app subscribes to audio RX characteristic (receives from toy microphone)
+    \item Mobile app prepares audio TX characteristic (sends to toy speaker)
+    \item Conversation context maintained throughout session
     \item Interaction data stored in Supabase
 \end{enumerate}
 
@@ -148,39 +157,63 @@ Currently, STT and Whisper processing happens on the mobile device:
 \end{itemize}
 
 \subsection{STT Processing Location}
-\textbf{Currently}, STT and Whisper processing happens on the mobile app side, not on ESP32:
+\textbf{Updated Architecture}: Audio recording happens on the toy hardware, not the mobile app:
 \begin{itemize}
-    \item Audio captured on mobile device
-    \item STT/Whisper processing performed locally on mobile
-    \item Processed text sent to cloud services for LLM processing
+    \item Toy microphone captures audio
+    \item Audio sent as WAV chunks to mobile app via Bluetooth
+    \item Mobile app forwards audio to Google Speech-to-Text via Supabase Edge Function
+    \item Transcribed text processed by Gemini LLM via Supabase Edge Function
+    \item Response converted to speech by Resemble AI via Supabase Edge Function
+    \item Audio chunks sent back to toy speaker via Bluetooth
 \end{itemize}
+
+\textbf{Key Change}: Whisper.cpp has been removed. All processing now uses cloud services via Supabase Edge Functions for better accuracy and reliability.
 
 \section{Future Requirements}
 
 \subsection{AI Service Keys Needed}
+All API keys are now configured in Supabase Edge Functions (not in mobile app):
 \begin{itemize}
-    \item \textbf{LLM Provider API Key}: For language model integration
-    \item \textbf{TTS Service API Key}: For text-to-speech conversion
-    \item \textbf{STT Service API Key}: For speech-to-text conversion
-    \item \textbf{Whisper.cpp Configuration}: For local speech processing
+    \item \textbf{Google Speech-to-Text API Key}: For audio transcription (GOOGLE\_STT\_API\_KEY)
+    \item \textbf{Google Gemini API Key}: For LLM responses (GEMINI\_API\_KEY)
+    \item \textbf{Resemble AI API Key}: For text-to-speech (RESEMBLE\_API\_KEY)
+    \item \textbf{Resemble Project ID}: For TTS project configuration (RESEMBLE\_DEFAULT\_PROJECT\_ID)
+    \item \textbf{Resemble Voice ID}: For TTS voice selection (RESEMBLE\_DEFAULT\_VOICE\_ID)
 \end{itemize}
+
+\textbf{Configuration Location}: Supabase Dashboard → Edge Functions → Secrets
 
 \subsection{Potential Architecture Adjustments}
 \begin{itemize}
-    \item ESP32-based STT processing (if required)
-    \item Offline capability enhancements
-    \item Additional toy connectivity protocols
+    \item Audio chunk size optimization for BLE transmission
+    \item Latency reduction through audio streaming
+    \item Offline capability with cached responses
+    \item Multiple toy connectivity support
+    \item Voice activity detection on toy hardware
 \end{itemize}
 
 \subsection{Security Enhancements}
 \begin{itemize}
-    \item End-to-end encryption for voice data
-    \item Additional authentication for toy connections
-    \item Enhanced privacy controls
+    \item All API keys stored server-side in Supabase Edge Functions
+    \item End-to-end encryption for voice data transmission
+    \item Session-based authentication for all API calls
+    \item Rate limiting at Edge Function level
+    \item Audit logging for all AI interactions
 \end{itemize}
 
 \section{Conclusion}
 
-The AI Toy Companion application is architected with security as a priority, particularly for payment processing. The Stripe integration properly handles secret keys server-side through Supabase Edge Functions, meeting client requirements. The AI services (LLM, TTS, STT, Whisper.cpp) have been implemented and are ready for deployment but require API key configuration for activation. The current STT implementation operates on the mobile device, which may need adjustment based on ESP32 requirements.
+The AI Toy Companion application has been architected with security and scalability as top priorities. The payment processing properly handles secret keys server-side through Supabase Edge Functions, meeting all security requirements.
+
+The voice processing pipeline has been updated to support toy-based audio recording:
+\begin{itemize}
+    \item \textbf{Audio Recording}: Toy microphone captures audio and sends WAV chunks via Bluetooth
+    \item \textbf{STT Processing}: Google Speech-to-Text via Supabase Edge Function
+    \item \textbf{LLM Processing}: Google Gemini via Supabase Edge Function
+    \item \textbf{TTS Processing}: Resemble AI via Supabase Edge Function
+    \item \textbf{Audio Playback}: Toy speaker receives audio chunks via Bluetooth
+\end{itemize}
+
+All API keys are securely stored in Supabase Edge Function environment variables, with no sensitive credentials in the mobile application. The architecture is production-ready and requires only API key configuration in the Supabase Dashboard to activate all services.
 
 \end{document}
