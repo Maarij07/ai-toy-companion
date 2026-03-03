@@ -11,6 +11,7 @@ import {
 import ToyService from '../services/ToyService';
 import AuthService from '../services/AuthService';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import OnboardingScreen from './OnboardingScreen';
 import { 
   Box, 
   Text, 
@@ -55,6 +56,7 @@ const SetupScreen: React.FC<SetupScreenProps> = ({ onNavigateToHome }) => {
     toyName: '',
     owners: [{ name: '', age: '' }],
   });
+  const [setupCompleted, setSetupCompleted] = useState(false);
 
 
   const interests = [
@@ -140,67 +142,48 @@ const SetupScreen: React.FC<SetupScreenProps> = ({ onNavigateToHome }) => {
     return !hasError;
   };
 
-  const handleCompleteSetup = async () => {
+  // Step 1: just validate the form and show the BLE connect screen.
+  // DB save happens only after hardware is confirmed connected.
+  const handleCompleteSetup = () => {
     if (validateInputs()) {
-      try {
-        console.log('AuthService:', AuthService);
-        console.log('ToyService:', ToyService);
-        
-        // Check if services are properly loaded
-        if (!AuthService || typeof AuthService.getSession !== 'function') {
-          throw new Error('AuthService is not properly loaded');
+      setSetupCompleted(true);
+    }
+  };
+
+  // Step 2: called by OnboardingScreen after BLE connect succeeds.
+  const handleSaveToyAfterConnect = async () => {
+    try {
+      const { data: sessionData } = await AuthService.getSession();
+      if (!sessionData?.session?.user) throw new Error('User not authenticated');
+      const userId = sessionData.session.user.id;
+
+      const { data, error } = await ToyService.createToy(userId, {
+        name: toyName.trim(),
+        custom_personality: customPrompt,
+        connected: true,
+        is_active: true,
+      });
+
+      if (error) throw error;
+
+      for (const owner of owners) {
+        if (owner.name.trim() && owner.age.trim()) {
+          await ToyService.addOwnerToToy(data.id, {
+            name: owner.name.trim(),
+            age: parseInt(owner.age),
+          });
         }
-        
-        if (!ToyService || typeof ToyService.createToy !== 'function') {
-          throw new Error('ToyService is not properly loaded');
-        }
-        
-        // Get current user ID from Supabase auth
-        const { data: sessionData } = await AuthService.getSession();
-        if (!sessionData?.session?.user) {
-          throw new Error('User not authenticated');
-        }
-        
-        const userId = sessionData.session.user.id;
-        
-        // Use Supabase ToyService to create the toy
-        const { data, error } = await ToyService.createToy(userId, {
-          name: toyName.trim(),
-          custom_personality: customPrompt,
-          connected: true,
-          is_active: true,
-        });
-        
-        if (error) {
-          console.error('Error creating toy:', error);
-          throw error;
-        }
-        
-        // Add toy owners
-        for (const owner of owners) {
-          if (owner.name.trim() && owner.age.trim()) {
-            await ToyService.addOwnerToToy(data.id, {
-              name: owner.name.trim(),
-              age: parseInt(owner.age)
-            });
-          }
-        }
-        
-        // Add toy interests
-        for (const interest of selectedInterests) {
-          await ToyService.addInterestToToy(data.id, interest as any);
-        }
-        
-        console.log('Toy setup completed and saved:', data);
-        
-        // Navigate to home screen
-        if (onNavigateToHome) {
-          onNavigateToHome();
-        }
-      } catch (error) {
-        console.error('Error saving toy data:', error);
-        // Optionally show an error message to the user
       }
+
+      for (const interest of selectedInterests) {
+        await ToyService.addInterestToToy(data.id, interest as any);
+      }
+
+      console.log('Toy saved after BLE connect:', data);
+    } catch (err) {
+      console.error('Error saving toy after connect:', err);
+    } finally {
+      onNavigateToHome && onNavigateToHome();
     }
   };
 
@@ -211,15 +194,23 @@ const SetupScreen: React.FC<SetupScreenProps> = ({ onNavigateToHome }) => {
     >
       <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
         <SafeAreaView style={{ flex: 1, backgroundColor: '#FFFFFF' }}>
-          <ScrollView 
-            contentContainerStyle={{ 
-              paddingHorizontal: 16,
-              paddingVertical: 20,
-              flexGrow: 1,
-              backgroundColor: '$backgroundLight0',
-            }}
-          >
-            {/* Header */}
+          {setupCompleted ? (
+            <OnboardingScreen
+              onNavigateToSetup={handleSaveToyAfterConnect}
+              onCancel={() => setSetupCompleted(false)}
+            />
+          ) : (
+            // Setup Form
+            <>
+            <ScrollView 
+              contentContainerStyle={{ 
+                paddingHorizontal: 16,
+                paddingVertical: 20,
+                flexGrow: 1,
+                backgroundColor: '#FFFFFF',
+              }}
+            >
+              {/* Header */}
             <Center mb="$6">
               <Box mb="$2">
                 <ToyBrick size={48} color="#6D8B74" />
@@ -457,6 +448,8 @@ const SetupScreen: React.FC<SetupScreenProps> = ({ onNavigateToHome }) => {
               </ButtonText>
             </Button>
           </Box>
+        </>
+          )}
         </SafeAreaView>
       </TouchableWithoutFeedback>
     </KeyboardAvoidingView>

@@ -12,22 +12,39 @@ class BLEService {
 
   async requestPermissions(): Promise<boolean> {
     if (Platform.OS === 'android') {
-      const granted = await PermissionsAndroid.request(
-        PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
-        {
-          title: 'Bluetooth Permission',
-          message: 'This app needs Bluetooth permission to connect to your AI toy.',
-          buttonNeutral: 'Ask Me Later',
-          buttonNegative: 'Cancel',
-          buttonPositive: 'OK',
-        }
-      );
+      if (Platform.Version >= 31) {
+        // Android 12+ requires BLUETOOTH_SCAN and BLUETOOTH_CONNECT
+        const results = await PermissionsAndroid.requestMultiple([
+          PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
+          PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
+        ]);
 
-      if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
-        console.warn('Bluetooth permission denied');
-        return false;
+        const allGranted = Object.values(results).every(
+          result => result === PermissionsAndroid.RESULTS.GRANTED
+        );
+
+        if (!allGranted) {
+          console.warn('Bluetooth permissions denied:', results);
+          return false;
+        }
+      } else {
+        // Android < 12 requires location permission for BLE scanning
+        const results = await PermissionsAndroid.requestMultiple([
+          PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+          PermissionsAndroid.PERMISSIONS.ACCESS_COARSE_LOCATION,
+        ]);
+
+        const allGranted = Object.values(results).every(
+          result => result === PermissionsAndroid.RESULTS.GRANTED
+        );
+
+        if (!allGranted) {
+          console.warn('Location permissions denied (required for BLE on Android < 12):', results);
+          return false;
+        }
       }
     }
+    // iOS permissions are handled via Info.plist — no runtime request needed
     return true;
   }
 
@@ -291,6 +308,37 @@ class BLEService {
     } catch (error) {
       console.error('Error sending audio chunks:', error);
       throw error;
+    }
+  }
+
+  startScan(onDeviceFound: (device: Device) => void, onError?: (error: any) => void): void {
+    this.manager.startDeviceScan(null, null, (error, device) => {
+      if (error) {
+        console.error('BLE scan error:', error);
+        if (onError) onError(error);
+        return;
+      }
+      if (device) {
+        onDeviceFound(device);
+      }
+    });
+  }
+
+  stopScan(): void {
+    this.manager.stopDeviceScan();
+  }
+
+  async connectById(deviceId: string): Promise<boolean> {
+    try {
+      this.device = await this.manager.connectToDevice(deviceId);
+      await this.device.discoverAllServicesAndCharacteristics();
+      this.isConnected = true;
+      console.log('Connected to device:', deviceId);
+      return true;
+    } catch (error) {
+      console.error('Error connecting to device:', error);
+      this.isConnected = false;
+      return false;
     }
   }
 

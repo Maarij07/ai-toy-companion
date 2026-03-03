@@ -56,79 +56,83 @@ interface CartItem {
   discount: number;
 }
 
+// ── Module-level cart cache (per user, kept in sync with mutations) ──────────
+let _cartCache: CartItem[] | null = null;
+let _cartCacheUserId: string | null = null;
+
+/** Call this from outside (e.g. after adding to cart) to force a fresh fetch */
+export const invalidateCartCache = () => { _cartCache = null; };
+
 const CartScreen = () => {
-  const [cartItems, setCartItems] = useState<CartItem[]>([]);
-  const [loading, setLoading] = useState(true);
-  
-  // Fetch cart items from Supabase
+  const [cartItems, setCartItems] = useState<CartItem[]>(_cartCache ?? []);
+  const [loading, setLoading] = useState(_cartCache === null);
+
+  // Helper: update both React state and the module-level cache atomically
+  const setCart = (updater: (prev: CartItem[]) => CartItem[]) => {
+    setCartItems(prev => {
+      const next = updater(prev);
+      _cartCache = next;
+      return next;
+    });
+  };
+
+  // Fetch cart items from Supabase (skipped when cache exists for this user)
   useEffect(() => {
     const fetchCartItems = async () => {
       try {
         const { data: sessionData } = await AuthService.getSession();
-        if (!sessionData?.session?.user) {
-          throw new Error('User not authenticated');
-        }
-        
+        if (!sessionData?.session?.user) throw new Error('User not authenticated');
+
         const userId = sessionData.session.user.id;
+
+        // Return early if cache is warm for this user
+        if (_cartCache !== null && _cartCacheUserId === userId) {
+          setCartItems(_cartCache);
+          setLoading(false);
+          return;
+        }
+
         const { data, error } = await CartService.getUserCart(userId);
-        
+
         if (error) {
           console.error('Error fetching cart items:', error);
-          // Fallback to mock data if there's an error
           setCartItems(mockCartItems);
         } else if (data) {
-          // Convert Supabase data to our CartItem format
           const formattedCartItems = data.map((item: any) => ({
-            id: typeof item.id === 'string' ? parseInt(item.id) : item.id, // Use the cart item ID for updates/removals
+            id: typeof item.id === 'string' ? parseInt(item.id) : item.id,
             name: item.products.name,
             price: parseFloat(item.products.price),
-            originalPrice: item.products.original_price ? parseFloat(item.products.original_price) : parseFloat(item.products.price),
+            originalPrice: item.products.original_price
+              ? parseFloat(item.products.original_price)
+              : parseFloat(item.products.price),
             image: item.products.image_url,
             quantity: item.quantity,
             discount: item.products.discount_percent || 0,
           }));
-          
+          _cartCache = formattedCartItems;
+          _cartCacheUserId = userId;
           setCartItems(formattedCartItems);
         } else {
-          // If data is null, use mock data
           setCartItems(mockCartItems);
         }
       } catch (error) {
         console.error('Unexpected error fetching cart items:', error);
-        // Fallback to mock data
         setCartItems(mockCartItems);
       } finally {
         setLoading(false);
       }
     };
-    
+
     fetchCartItems();
   }, []);
-  
+
   const updateQuantity = async (id: number, newQuantity: number) => {
     if (newQuantity < 1) return;
-    
     try {
-      // Update quantity in Supabase - id refers to the cart item ID, not product ID
       const { error } = await CartService.updateItemQuantity(id.toString(), newQuantity);
-      
-      if (error) {
-        console.error('Error updating item quantity:', error);
-        // Fallback to local state update if Supabase fails
-        setCartItems(prevItems =>
-          prevItems.map(item =>
-            item.id === id ? { ...item, quantity: newQuantity } : item
-          )
-        );
-        return;
-      }
-      
-      // Update local state
-      setCartItems(prevItems =>
-        prevItems.map(item =>
-          item.id === id ? { ...item, quantity: newQuantity } : item
-        )
-      );
+      if (error) console.error('Error updating item quantity:', error);
+      // Update state + cache regardless (optimistic)
+      setCart(prev => prev.map(item => item.id === id ? { ...item, quantity: newQuantity } : item));
     } catch (error) {
       console.error('Error updating item quantity:', error);
     }
@@ -136,18 +140,10 @@ const CartScreen = () => {
 
   const removeItem = async (id: number) => {
     try {
-      // Remove item from Supabase cart - id refers to the cart item ID, not product ID
       const { error } = await CartService.removeItemFromCart(id.toString());
-      
-      if (error) {
-        console.error('Error removing item:', error);
-        // Fallback to local state removal if Supabase fails
-        setCartItems(prevItems => prevItems.filter(item => item.id !== id));
-        return;
-      }
-      
-      // Update local state
-      setCartItems(prevItems => prevItems.filter(item => item.id !== id));
+      if (error) console.error('Error removing item:', error);
+      // Update state + cache regardless (optimistic)
+      setCart(prev => prev.filter(item => item.id !== id));
     } catch (error) {
       console.error('Error removing item:', error);
     }
@@ -423,10 +419,7 @@ const CartScreen = () => {
                 amount={total}
                 description={`AI Toy Purchase - ${cartItems.length} items`}
                 onSuccess={(paymentIntentId) => {
-                  // Clear the cart after successful payment
-                  setCartItems([]);
-                  
-                  // Show success message
+                  setCart(() => []);
                   Alert.alert('Success', `Payment successful! Order ID: ${paymentIntentId}`);
                   setShowCheckoutModal(false);
                 }}

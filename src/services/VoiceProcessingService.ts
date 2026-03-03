@@ -1,261 +1,190 @@
-import BLEService from './BLEService';
+import ESP32Service from './ESP32Service';
 import WhisperService from './WhisperService';
 import GoogleSTTService from './GoogleSTTService';
 import LLMService from './LLMService';
 import TTSService from './TTSService';
 
+// Config only covers AI services — BLE / NUS UUIDs are internal to ESP32Service
 interface VoiceProcessingConfig {
   whisperModelPath?: string;
   ttsLanguage?: string;
-  esp32ServiceUUID: string;
-  audioRxCharacteristicUUID: string; // For receiving audio from toy microphone
-  audioTxCharacteristicUUID: string; // For sending audio to toy speaker
 }
 
 class VoiceProcessingService {
-  private bleService: typeof BLEService;
-  private whisperService: typeof WhisperService;
-  private googleSTTService: typeof GoogleSTTService;
-  private llmService: typeof LLMService;
-  private ttsService: typeof TTSService;
   private config: VoiceProcessingConfig | null = null;
   private isInitialized: boolean = false;
 
-  constructor() {
-    this.bleService = BLEService;
-    this.whisperService = WhisperService;
-    this.googleSTTService = GoogleSTTService;
-    this.llmService = LLMService;
-    this.ttsService = TTSService;
-  }
+  // ── Initialise AI services ─────────────────────────────────────────────────
 
-  /**
-   * Initialize the voice processing service with configuration
-   */
   async initialize(config: VoiceProcessingConfig): Promise<boolean> {
     try {
       this.config = config;
 
-      // Initialize all services
-      const initPromises = [];
+      const initPromises: Promise<boolean>[] = [];
 
-      // Initialize Whisper.cpp (local processing on mobile)
+      // Whisper.cpp (local STT — native module not yet built, will fall through)
       if (config.whisperModelPath) {
         initPromises.push(
-          this.whisperService.initialize({
-            modelPath: config.whisperModelPath,
-            language: 'en'
-          })
+          WhisperService.initialize({ modelPath: config.whisperModelPath, language: 'en' })
         );
       }
 
-      // Initialize Google STT as fallback (uses edge function with API key server-side)
-      initPromises.push(
-        this.googleSTTService.initialize({
-          languageCode: 'en-US'
-        })
-      );
+      // Google STT (Supabase edge function fallback)
+      initPromises.push(GoogleSTTService.initialize({ languageCode: 'en-US' }));
 
-      // Initialize LLM service (Gemini via edge function)
-      initPromises.push(
-        this.llmService.initialize({})
-      );
+      // Gemini LLM (Supabase edge function)
+      initPromises.push(LLMService.initialize({}));
 
-      // Initialize TTS service (Resemble via edge function)
-      initPromises.push(
-        this.ttsService.initialize({
-          language: config.ttsLanguage || 'en-US',
-        })
-      );
+      // Resemble TTS (Supabase edge function)
+      initPromises.push(TTSService.initialize({ language: config.ttsLanguage || 'en-US' }));
 
       await Promise.all(initPromises);
       this.isInitialized = true;
-      console.log('Voice processing service initialized successfully');
+      console.log('VoiceProcessingService: AI services initialised');
       return true;
     } catch (error) {
-      console.error('Error initializing voice processing service:', error);
+      console.error('VoiceProcessingService: init failed', error);
       return false;
     }
   }
 
+  // ── Full pipeline: audio bytes → STT → LLM → TTS → BLE chunks back ────────
+
   /**
-   * Process audio chunks from toy microphone through the complete pipeline
-   * NEW ARCHITECTURE: Toy records → sends WAV chunks → Whisper.cpp → Gemini → Resemble → send back to toy
+   * Step 1 — STT: Whisper (local) → Google STT (edge fn) fallback
+   * Step 2 — LLM: Gemini via Supabase edge function
+   * Step 3 — TTS: Resemble AI via Supabase edge function → WAV ArrayBuffer
+   * Step 4 — BLE: send WAV back to ESP32 in 500-byte chunks via ESP32Service
    */
-  async processAudioFromToy(audioData: ArrayBuffer, toyPersonality?: string): Promise<{ success: boolean; error: string }> {
+  async processAudioFromToy(
+    audioData: ArrayBuffer,
+    toyPersonality?: string
+  ): Promise<{ success: boolean; error: string }> {
     try {
-      if (!this.isInitialized || !this.config) {
-        return { success: false, error: 'Voice processing service not initialized' };
+      if (!this.isInitialized) {
+        return { success: false, error: 'VoiceProcessingService not initialised' };
       }
 
-      console.log('Starting voice processing pipeline (Toy → Mobile → Toy)');
-      console.log(`Received audio data: ${audioData.byteLength} bytes`);
+      console.log(`Pipeline start — audio: ${audioData.byteLength} bytes`);
 
-      // Step 1: Transcribe using Whisper.cpp (local on mobile)
-      console.log('Transcribing audio with Whisper.cpp...');
-      let transcriptionResult = await this.whisperService.transcribe(audioData);
+      // ── Step 1: STT ──────────────────────────────────────────────────────
+      let sttResult = await WhisperService.transcribe(audioData);
 
-      // Fallback to Google STT if Whisper fails
-      if (!transcriptionResult.success && this.googleSTTService.isReady()) {
-        console.log('Whisper failed, falling back to Google STT...');
-        transcriptionResult = await this.googleSTTService.transcribe(audioData);
+      if (!sttResult.success) {
+        console.log('Whisper unavailable — falling back to Google STT');
+        sttResult = await GoogleSTTService.transcribe(audioData);
       }
 
-      if (!transcriptionResult.success) {
-        return { success: false, error: `STT failed: ${transcriptionResult.error}` };
+      if (!sttResult.success) {
+        return { success: false, error: `STT failed: ${sttResult.error}` };
       }
 
-      const transcribedText = transcriptionResult.text;
-      console.log('Transcription successful:', transcribedText);
+      console.log(`STT transcript: "${sttResult.text}"`);
 
-      // Step 2: Send transcribed text to Gemini LLM (via Edge Function)
-      if (!this.llmService.isReady()) {
-        return { success: false, error: 'LLM service not available' };
+      // ── Step 2: LLM ──────────────────────────────────────────────────────
+      if (!LLMService.isReady()) {
+        return { success: false, error: 'LLM service not ready' };
       }
 
-      console.log('Sending text to Gemini LLM...');
-      const llmResult = await this.llmService.getResponse(transcribedText, {
-        toyPersonality: toyPersonality || 'You are a friendly AI toy companion. Respond in a warm, caring, and child-friendly manner. Keep responses short, engaging, and appropriate for children.',
-        conversationId: `toy-${Date.now()}`
+      const llmResult = await LLMService.getResponse(sttResult.text, {
+        toyPersonality:
+          toyPersonality ||
+          'You are a friendly AI toy companion. Respond warmly and in a child-friendly way. Keep replies short.',
+        conversationId: `toy-${Date.now()}`,
       });
 
       if (!llmResult.success) {
         return { success: false, error: `LLM failed: ${llmResult.error}` };
       }
 
-      const llmResponse = llmResult.response;
-      console.log('Gemini response received:', llmResponse);
+      console.log(`LLM response: "${llmResult.response}"`);
 
-      // Step 3: Convert LLM response to speech using Resemble TTS (via Edge Function)
-      if (!this.ttsService.isReady()) {
-        return { success: false, error: 'TTS service not available' };
+      // ── Step 3: TTS ──────────────────────────────────────────────────────
+      if (!TTSService.isReady()) {
+        return { success: false, error: 'TTS service not ready' };
       }
 
-      console.log('Converting response to speech with Resemble TTS...');
-      const ttsResult = await this.ttsService.speak(llmResponse);
+      const ttsResult = await TTSService.speak(llmResult.response);
 
       if (!ttsResult.success || !ttsResult.audioData) {
         return { success: false, error: `TTS failed: ${ttsResult.error}` };
       }
 
-      console.log(`TTS audio generated: ${ttsResult.audioData.byteLength} bytes`);
+      console.log(`TTS WAV: ${ttsResult.audioData.byteLength} bytes`);
 
-      // Step 4: Send audio chunks back to toy via BLE
-      if (!this.bleService.getIsConnected()) {
-        return { success: false, error: 'Toy not connected via BLE' };
+      // ── Step 4: BLE — send WAV to ESP32 in 500-byte chunks ───────────────
+      if (!ESP32Service.isConnected()) {
+        return { success: false, error: 'ESP32 not connected' };
       }
 
-      console.log('Sending audio chunks to toy via BLE...');
-      
-      try {
-        await this.bleService.sendAudioChunks(
-          this.config.esp32ServiceUUID, 
-          this.config.audioTxCharacteristicUUID,
-          ttsResult.audioData,
-          512 // Chunk size in bytes
-        );
-        console.log('Successfully sent audio chunks to toy');
-      } catch (sendError: unknown) {
-        console.error('Error sending audio to toy:', sendError);
-        const errorMessage = sendError instanceof Error ? sendError.message : 'Unknown error';
-        return { success: false, error: `Failed to send audio to toy: ${errorMessage}` };
-      }
+      await ESP32Service.sendFileToESP32('response.wav', ttsResult.audioData);
+      console.log('Pipeline complete — response.wav sent to ESP32');
 
-      console.log('Voice processing pipeline completed successfully');
       return { success: true, error: '' };
     } catch (error) {
-      console.error('Error in voice processing pipeline:', error);
+      console.error('VoiceProcessingService pipeline error:', error);
       return { success: false, error: (error as Error).message };
     }
   }
 
+  // ── Listen for autonomous recordings pushed by ESP32 ─────────────────────
+
   /**
-   * Start listening to audio chunks from toy microphone
+   * Register on the TX characteristic.
+   * Whenever ESP32 finishes a recording it pushes:
+   *   FILE:name:size\n  →  [binary chunks]  →  END:name\n  →  LISTENING\n
+   *
+   * ESP32Service assembles the chunks and calls onProcessingComplete after
+   * the full pipeline (STT → LLM → TTS → BLE send) completes.
    */
   async startListeningToToy(
     onProcessingComplete: (success: boolean, error?: string) => void,
     toyPersonality?: string
   ): Promise<void> {
-    if (!this.config) {
-      console.error('Voice processing service not configured');
+    if (!ESP32Service.isConnected()) {
+      console.error('VoiceProcessingService: ESP32 not connected');
       return;
     }
 
-    if (!this.bleService.getIsConnected()) {
-      console.error('Toy not connected');
-      return;
-    }
+    // Register auto-receive handler BEFORE subscribing so no message is missed
+    ESP32Service.setAutoReceiveHandler(async (filename, audioData) => {
+      console.log(`Received ${filename} (${audioData.byteLength} bytes) — running pipeline`);
+      const result = await this.processAudioFromToy(audioData, toyPersonality);
+      onProcessingComplete(result.success, result.error || undefined);
+    });
 
-    const audioChunks: ArrayBuffer[] = [];
+    // Subscribe to TX — drives the internal state machine + logs signals
+    await ESP32Service.subscribeToMessages((msg) => {
+      if (msg.type === 'SAVED')    { console.log(`ESP32 saved: ${msg.filename}`); }
+      if (msg.type === 'ERROR')    { console.error(`ESP32 error: ${msg.message}`); }
+      if (msg.type === 'LISTENING'){ console.log('ESP32 ready to receive'); }
+    });
 
-    console.log('Started listening to toy microphone...');
+    console.log('VoiceProcessingService: listening for recordings from ESP32');
+  }
 
-    await this.bleService.subscribeToAudioChunks(
-      this.config.esp32ServiceUUID,
-      this.config.audioRxCharacteristicUUID,
-      (chunk: ArrayBuffer) => {
-        console.log(`Received audio chunk: ${chunk.byteLength} bytes`);
-        audioChunks.push(chunk);
-      },
-      async () => {
-        console.log('Audio recording complete, processing...');
-        
-        // Concatenate all chunks into single ArrayBuffer
-        const totalLength = audioChunks.reduce((sum, chunk) => sum + chunk.byteLength, 0);
-        const completeAudio = new Uint8Array(totalLength);
-        let offset = 0;
-        
-        for (const chunk of audioChunks) {
-          completeAudio.set(new Uint8Array(chunk), offset);
-          offset += chunk.byteLength;
-        }
+  // ── BLE connection helpers ────────────────────────────────────────────────
 
-        console.log(`Complete audio assembled: ${completeAudio.byteLength} bytes`);
+  async connectToESP32(): Promise<boolean> {
+    return ESP32Service.connect();
+  }
 
-        // Process the complete audio through the pipeline
-        const result = await this.processAudioFromToy(completeAudio.buffer, toyPersonality);
-        
-        onProcessingComplete(result.success, result.error);
-        
-        // Clear chunks for next recording
-        audioChunks.length = 0;
-      }
+  async disconnectFromESP32(): Promise<void> {
+    await ESP32Service.disconnect();
+  }
+
+  // ── Status ────────────────────────────────────────────────────────────────
+
+  isReady(): boolean {
+    return (
+      this.isInitialized &&
+      ESP32Service.isConnected() &&
+      (WhisperService.isReady() || GoogleSTTService.isReady()) &&
+      LLMService.isReady() &&
+      TTSService.isReady()
     );
   }
 
-  /**
-   * Connect to ESP32 device
-   */
-  async connectToESP32(): Promise<boolean> {
-    if (!this.config) {
-      console.error('Voice processing service not configured');
-      return false;
-    }
-
-    return await this.bleService.scanAndConnect(this.config.esp32ServiceUUID);
-  }
-
-  /**
-   * Disconnect from ESP32 device
-   */
-  async disconnectFromESP32(): Promise<void> {
-    await this.bleService.disconnect();
-  }
-
-  /**
-   * Check if all required services are ready
-   */
-  isReady(): boolean {
-    return this.isInitialized && 
-           this.bleService.getIsConnected() && 
-           (this.whisperService.isReady() || this.googleSTTService.isReady()) &&
-           this.llmService.isReady() &&
-           this.ttsService.isReady();
-  }
-
-  /**
-   * Get current configuration
-   */
   getConfig(): VoiceProcessingConfig | null {
     return this.config;
   }

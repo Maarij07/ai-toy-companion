@@ -9,32 +9,19 @@ class AuthServiceManual {
     try {
       console.log('Attempting to sign up user:', email);
       
-      // First, check if user already exists
-      const { data: existingUser, error: fetchError } = await supabase
-        .from('profiles')
-        .select('id')
-        .eq('email', email)
-        .single();
-      
-      if (existingUser) {
-        console.log('User already exists, returning existing user');
-        return { data: { user: existingUser }, error: null };
-      }
-      
-      // If user doesn't exist, create new user
-      // To avoid trigger issues, we'll create the user and profile separately
-      // First, let's try a direct approach that bypasses the trigger conflict
-      
-      // Step 1: Create the auth user
+      // Step 1: Create the auth user with full_name in metadata
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email,
         password,
+        options: {
+          data: {
+            full_name: fullName,
+          },
+        },
       });
 
       if (authError) {
         console.error('Auth signup error:', authError);
-        console.error('This is likely due to database trigger issues');
-        // Re-throw the error since auth signup failed
         throw authError;
       }
       
@@ -44,40 +31,60 @@ class AuthServiceManual {
       
       console.log('Auth user created successfully:', authData.user.id);
       
-      // Step 2: Create the profile separately after a short delay
-      // This gives time for any asynchronous operations to complete
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      // Step 2: Wait for the trigger to create the profile
+      // The trigger should fire automatically when a new auth.users record is created
+      let profileExists = false;
+      let retryCount = 0;
+      const maxRetries = 10;
       
-      try {
-        // Try to insert the profile
+      while (!profileExists && retryCount < maxRetries) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        try {
+          const { data: profileData, error: checkError } = await supabase
+            .from('profiles')
+            .select('id')
+            .eq('id', authData.user.id)
+            .single();
+          
+          if (profileData) {
+            console.log('Profile created by trigger successfully');
+            profileExists = true;
+          } else if (checkError && checkError.code === 'PGRST116') {
+            // Profile not found yet, will retry
+            console.log(`Profile not found yet, retry ${retryCount + 1}/${maxRetries}`);
+            retryCount++;
+          } else if (checkError) {
+            console.error('Error checking profile:', checkError);
+            retryCount++;
+          }
+        } catch (checkError) {
+          console.error('Exception checking profile:', checkError);
+          retryCount++;
+        }
+      }
+      
+      if (!profileExists) {
+        console.warn('Profile was not created by trigger, attempting manual creation');
+        
+        // Only try manual creation if trigger failed
         const { error: profileError } = await supabase
           .from('profiles')
           .insert([
             {
               id: authData.user.id,
-              email: authData.user.email ?? email,
+              email: authData.user.email,
               full_name: fullName,
             }
           ]);
         
         if (profileError) {
-          console.error('Profile creation error:', profileError);
-          // Check different types of errors
-          if (profileError.message.includes('duplicate key value') || profileError.message.includes('already exists') || profileError.code === '23505') {
-            console.log('Profile already exists, continuing...');
-          } else if (profileError.code === '42501') {
-            console.log('RLS policy blocking profile creation, this is expected behavior');
-            // The profile might be created by the trigger after all
-          } else {
-            // For other errors, log but continue
-            console.error('Unexpected profile creation error:', profileError);
-          }
+          console.error('Manual profile creation error:', profileError);
+          // Warn but don't fail - profile creation error shouldn't prevent successful auth signup
+          console.warn('Could not create profile, but user was successfully created in auth');
         } else {
-          console.log('Profile created successfully');
+          console.log('Profile created manually successfully');
         }
-      } catch (profileCreationError: any) {
-        console.error('Exception during profile creation:', profileCreationError);
-        // Continue anyway, as the auth user was created
       }
 
       return { data: authData, error: null };

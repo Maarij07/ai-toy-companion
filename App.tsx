@@ -14,19 +14,7 @@ import { GluestackUIProvider } from '@gluestack-ui/themed';
 import customConfig from './src/config/theme';
 
 // Supabase services
-import AuthService from './src/services/AuthService';
-
-// Debug logging
-console.log('AuthService imported:', AuthService);
-
-// Test AuthService
-if (AuthService && typeof AuthService === 'function') {
-  console.log('AuthService is a function');
-} else if (AuthService && typeof AuthService === 'object') {
-  console.log('AuthService is an object with methods:', Object.keys(AuthService));
-} else {
-  console.log('AuthService is undefined or invalid');
-}
+import { AuthService } from './src/services/AuthService';
 
 
 
@@ -128,7 +116,7 @@ function App() {
       case 'forgot':
         return <ForgotPasswordScreen onNavigateToLogin={navigateToLogin} />;
       case 'home':
-        return <HomeScreen onNavigateToHome={() => setCurrentScreen('home')} />;
+        return <HomeScreen onNavigateToHome={() => setCurrentScreen('home')} onNavigateToAddToy={navigateToSetup} />;
       case 'voiceProcessing':
         return <VoiceProcessingScreen />;
       case 'login':

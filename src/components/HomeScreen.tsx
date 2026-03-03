@@ -1,11 +1,17 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   SafeAreaView,
   ScrollView,
   RefreshControl,
   Animated,
   StatusBar,
+  ActivityIndicator,
+  Modal,
+  View,
 } from 'react-native';
+import BLEService from '../services/BLEService';
+import { ToyService } from '../services/ToyService';
+import { AuthService } from '../services/AuthService';
 import { 
   Box, 
   Text, 
@@ -20,24 +26,24 @@ import {
   Avatar,
   Pressable
 } from '@gluestack-ui/themed';
-import { 
-  User, 
-  Bell, 
-  Power, 
+import {
+  User,
+  Bell,
+  Power,
   Settings,
-  Layers,
   MessageSquare,
-  UserRound,
   Shield,
   PlusCircle,
+  ChevronLeft,
   ChevronRight,
   Calendar,
-  BookOpen,
-  Gamepad2,
   MessageCircle,
   Home,
   Store,
-  ShoppingCart
+  ShoppingCart,
+  Wifi,
+  WifiOff,
+  Trash2,
 } from 'lucide-react-native';
 
 // Import other screens for tab navigation
@@ -55,8 +61,8 @@ interface NewHomeContentProps {
   setSelectedToy: React.Dispatch<React.SetStateAction<any>>;
 }
 
-const NewHomeContent = ({ 
-  onNavigateToHome, 
+const NewHomeContent = ({
+  onNavigateToHome,
   onNavigateToAddToy,
   toyDetailVisible,
   setToyDetailVisible,
@@ -64,9 +70,10 @@ const NewHomeContent = ({
   setSelectedToy
 }: NewHomeContentProps) => {
   const [refreshing, setRefreshing] = useState(false);
-  const [toyStatus, setToyStatus] = useState('online');
+  const [toys, setToys] = useState<any[]>([]);
+  const [isLoadingToys, setIsLoadingToys] = useState(true);
 
-  const fadeAnim = new Animated.Value(0);
+  const fadeAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     Animated.timing(fadeAnim, {
@@ -74,18 +81,26 @@ const NewHomeContent = ({
       duration: 400,
       useNativeDriver: true,
     }).start();
+    loadToys();
   }, []);
+
+  const loadToys = async () => {
+    try {
+      setIsLoadingToys(true);
+      const { data: sessionData } = await AuthService.getSession();
+      if (!sessionData?.session?.user?.id) return;
+      const { data: toysData } = await ToyService.getUserToys(sessionData.session.user.id);
+      if (toysData) setToys(toysData);
+    } catch (e) {
+      // silently fail, toys stays []
+    } finally {
+      setIsLoadingToys(false);
+    }
+  };
 
   const onRefresh = () => {
     setRefreshing(true);
-    setTimeout(() => setRefreshing(false), 1500);
-  };
-
-  const mockToyData = {
-    name: 'Buddy the Bear',
-    status: toyStatus,
-    mood: 'happy',
-    lastInteraction: '2 hours ago',
+    loadToys().finally(() => setRefreshing(false));
   };
 
   const parentalControls = [
@@ -101,43 +116,12 @@ const NewHomeContent = ({
     }, {} as Record<string, boolean>)
   );
 
-  const recentActivities = [
-    { id: 1, time: '2h ago', type: 'Story', description: 'Buddy told a bedtime story', icon: 'book-outline' },
-    { id: 2, time: '4h ago', type: 'Game', description: 'Played "Guess the Animal"', icon: 'game-controller-outline' },
-    { id: 3, time: 'Yesterday', type: 'Chat', description: 'Discussed favorite colors', icon: 'chatbubble-outline' },
-  ];
-
   const toggleParentalControl = (id: string) => {
     setParentalControlStates(prev => ({
       ...prev,
       [id]: !prev[id],
     }));
   };
-
-  if (toyStatus === 'offline') {
-    return (
-      <ScrollView
-        contentContainerStyle={{ padding: 20, flex: 1, justifyContent: 'center' }}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-        showsVerticalScrollIndicator={false}
-      >
-        <Card bg="$backgroundLight0" borderRadius="$lg" p="$6" alignItems="center" justifyContent="center" my="$4">
-          <Box bg="$backgroundLight50" borderRadius="$full" p="$4" mb="$4">
-            <Icon as={Power} size="2xl" color="$textDark500" />
-          </Box>
-          <Heading size="lg" color="$textDark800" textAlign="center" mb="$2">Buddy is offline</Heading>
-          <Text size="sm" color="$textDark500" textAlign="center" mb="$4">Connect your toy to continue</Text>
-          <Button 
-            bg="$primary500" 
-            borderRadius="$full" 
-            onPress={() => setToyStatus('online')}
-          >
-            <ButtonText color="$textLight500">Reconnect Toy</ButtonText>
-          </Button>
-        </Card>
-      </ScrollView>
-    );
-  }
 
   return (
     <>
@@ -153,37 +137,56 @@ const NewHomeContent = ({
             <Text size="sm" color="$textDark500">Welcome back</Text>
           </VStack>
 
-          {/* Toy Status Strip */}
-          <Pressable 
-            bg="$backgroundLight0" 
-            borderRadius="$lg" 
-            p="$4" 
-            mb="$4"
-            onPress={() => {
-              setSelectedToy(mockToyData);
-              setToyDetailVisible(true);
-            }}
-          >
-            <HStack justifyContent="space-between" alignItems="center">
+          {/* Toys */}
+          {isLoadingToys ? (
+            <Box bg="$backgroundLight0" borderRadius="$lg" p="$4" mb="$4" alignItems="center">
+              <ActivityIndicator size="small" color="#6D8B74" />
+            </Box>
+          ) : toys.length === 0 ? (
+            <Box bg="$backgroundLight0" borderRadius="$lg" p="$4" mb="$4">
               <HStack alignItems="center">
-                <Avatar size="md" bg="$primary500" mr="$3">
-                  <Text color="$textLight50" fontWeight="$bold">BB</Text>
-                </Avatar>
+                <Box bg="$backgroundLight100" borderRadius="$full" p="$3" mr="$3">
+                  <Icon as={Power} size="md" color="$textDark400" />
+                </Box>
                 <VStack>
-                  <Text size="lg" fontWeight="$bold" color="$textDark800">{mockToyData.name}</Text>
-                  <HStack alignItems="center">
-                    <Box w="$2" h="$2" bg="$success500" borderRadius="$full" mr="$2" />
-                    <Text size="sm" color="$textDark800">Connected</Text>
-                  </HStack>
-                  <Text size="xs" color="$textDark500">Last active {mockToyData.lastInteraction}</Text>
+                  <Text size="sm" fontWeight="$semibold" color="$textDark800">No toy connected</Text>
+                  <Text size="xs" color="$textDark500">Add a toy to get started</Text>
                 </VStack>
               </HStack>
-              
-              <VStack alignItems="flex-end">
-                <Icon as={ChevronRight} size="md" color="$textDark500" />
-              </VStack>
-            </HStack>
-          </Pressable>
+            </Box>
+          ) : (
+            toys.map((toy: any) => (
+              <Pressable
+                key={toy.id}
+                bg="$backgroundLight0"
+                borderRadius="$lg"
+                p="$4"
+                mb="$4"
+                onPress={() => {
+                  setSelectedToy(toy);
+                  setToyDetailVisible(true);
+                }}
+              >
+                <HStack justifyContent="space-between" alignItems="center">
+                  <HStack alignItems="center">
+                    <Avatar size="md" bg="$primary500" mr="$3">
+                      <Text color="$textLight50" fontWeight="$bold">
+                        {toy.name?.charAt(0).toUpperCase() || 'T'}
+                      </Text>
+                    </Avatar>
+                    <VStack>
+                      <Text size="lg" fontWeight="$bold" color="$textDark800">{toy.name}</Text>
+                      <HStack alignItems="center">
+                        <Box w="$2" h="$2" bg={toy.connected ? "$success500" : "$warning500"} borderRadius="$full" mr="$2" />
+                        <Text size="sm" color="$textDark800">{toy.connected ? 'Connected' : 'Disconnected'}</Text>
+                      </HStack>
+                    </VStack>
+                  </HStack>
+                  <Icon as={ChevronRight} size="md" color="$textDark500" />
+                </HStack>
+              </Pressable>
+            ))
+          )}
 
           {/* Add New Toy */}
           <Pressable 
@@ -254,23 +257,12 @@ const NewHomeContent = ({
           {/* Recent Activity */}
           <VStack>
             <Heading size="sm" mb="$3" color="$textDark800">Recent Activity</Heading>
-            {recentActivities.map((activity) => (
-              <Pressable key={activity.id} bg="$backgroundLight0" borderRadius="$lg" p="$3" mb="$2">
-                <HStack alignItems="center">
-                  <Box bg="$primary200" borderRadius="$full" w="$10" h="$10" justifyContent="center" alignItems="center" mr="$3">
-                    <Icon as={BookOpen} size="sm" color="$primary500" />
-                  </Box>
-                  <VStack flex={1}>
-                    <HStack justifyContent="space-between" mb="$1">
-                      <Text size="sm" fontWeight="$medium" color="$textDark800">{activity.type}</Text>
-                      <Text size="xs" color="$textDark500">{activity.time}</Text>
-                    </HStack>
-                    <Text size="sm" color="$textDark500">{activity.description}</Text>
-                  </VStack>
-                  <Icon as={ChevronRight} size="sm" color="$textDark500" />
-                </HStack>
-              </Pressable>
-            ))}
+            <Box bg="$backgroundLight0" borderRadius="$lg" p="$5" alignItems="center">
+              <Icon as={MessageSquare} size="lg" color="$textDark400" mb="$2" />
+              <Text size="sm" color="$textDark500" textAlign="center">
+                Connect a toy to see recent activity
+              </Text>
+            </Box>
           </VStack>
         </Animated.View>
       </ScrollView>
@@ -278,135 +270,567 @@ const NewHomeContent = ({
   );
 };
 
-const ToyDetailScreen = ({ toy, onGoBack }: { toy: any; onGoBack: () => void; }) => {
-  const [activeTab, setActiveTab] = useState('Personality');
+const ToyDetailScreen = ({ toy, onGoBack }: { toy: any; onGoBack: () => void }) => {
+  const [selectedMode, setSelectedMode] = useState('Chat');
+  const [safetyMode, setSafetyMode] = useState(true);
+  const [contentFilter, setContentFilter] = useState(true);
+  const [isConnected, setIsConnected] = useState<boolean>(!!toy?.connected);
+  const [isDisconnecting, setIsDisconnecting] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [forgetDialogVisible, setForgetDialogVisible] = useState(false);
 
-  const tabOptions = [
-    { id: 'Personality', label: 'Personality', icon: UserRound },
-    { id: 'Mode', label: 'Mode', icon: Layers },
-    { id: 'Convos', label: 'Convos', icon: MessageSquare },
-    { id: 'Settings', label: 'Settings', icon: Settings },
+  const owners: any[] = toy?.toy_owners || [];
+  const interests: string[] = (toy?.toy_interests || []).map((i: any) => i.interest || i);
+
+  const modes = [
+    { id: 'Chat',   emoji: '💬', label: 'Chat' },
+    { id: 'Story',  emoji: '📖', label: 'Story' },
+    { id: 'Tutor',  emoji: '📚', label: 'Tutor' },
+    { id: 'Rap',    emoji: '🎤', label: 'Rap' },
+    { id: 'Debate', emoji: '🤔', label: 'Debate' },
   ];
 
-  const renderTabContent = () => {
-    switch (activeTab) {
-      case 'Personality':
-        return (
-          <VStack space="md">
-            <Text size="sm" color="$textDark800" mb="$2">Select a personality trait for your toy:</Text>
-            {['Friendly Helper', 'Science Explorer', 'Creative Artist', 'Storyteller', 'Smart Teacher'].map((item, index) => (
-              <Pressable key={index} bg="$backgroundLight0" borderRadius="$lg" p="$4" mb="$2" borderWidth={1} borderColor="$borderLight300">
-                <Text size="sm" color="$textDark800">{item}</Text>
-              </Pressable>
-            ))}
-          </VStack>
-        );
-      case 'Mode':
-        return (
-          <VStack space="md">
-            <Text size="sm" color="$textDark800" mb="$2">Select a mode for your toy:</Text>
-            {[
-              { icon: '💬', label: 'Chat Mode' },
-              { icon: '🎤', label: 'Rap Mode' },
-              { icon: '🤔', label: 'Debate Mode' },
-              { icon: '🤗', label: 'Counselor Mode' },
-              { icon: '📚', label: 'Tutor Mode' }
-            ].map((item, index) => (
-              <Pressable key={index} bg="$backgroundLight0" borderRadius="$lg" p="$4" mb="$2" borderWidth={1} borderColor="$borderLight300">
-                <HStack alignItems="center">
-                  <Box bg="$primary100" borderRadius="$full" w="$8" h="$8" justifyContent="center" alignItems="center" mr="$3">
-                    <Text size="sm" fontWeight="$bold" color="$primary500">{item.icon}</Text>
-                  </Box>
-                  <Text size="sm" color="$textDark800">{item.label}</Text>
-                </HStack>
-              </Pressable>
-            ))}
-          </VStack>
-        );
-      case 'Convos':
-        return (
-          <VStack space="md">
-            <Text size="sm" color="$textDark800" mb="$2">Start a conversation:</Text>
-            {['Chat', 'Voice', 'Video'].map((item, index) => (
-              <Pressable key={index} bg="$backgroundLight0" borderRadius="$lg" p="$4" mb="$2" borderWidth={1} borderColor="$borderLight300">
-                <Text size="sm" color="$textDark800">{item}</Text>
-              </Pressable>
-            ))}
-          </VStack>
-        );
-      case 'Settings':
-        return (
-          <VStack space="md">
-            <Text size="sm" color="$textDark800" mb="$2">Configure toy settings:</Text>
-            {['General', 'Safety', 'Notifications', 'Connection'].map((item, index) => (
-              <Pressable key={index} bg="$backgroundLight0" borderRadius="$lg" p="$4" mb="$2" borderWidth={1} borderColor="$borderLight300">
-                <Text size="sm" color="$textDark800">{item}</Text>
-              </Pressable>
-            ))}
-          </VStack>
-        );
-      default:
-        return null;
+  const interestColors: Record<string, string> = {
+    'Creative Arts':     '#FCE7F3',
+    'Science & Tech':    '#DBEAFE',
+    'Sports & Games':    '#DCFCE7',
+    'Music & Dance':     '#FEF3C7',
+    'Reading & Stories': '#EDE9FE',
+    'Animals & Nature':  '#D1FAE5',
+    'Cooking & Food':    '#FEF9C3',
+    'Building & Making': '#FFE4E6',
+  };
+
+  const cardShadow = {
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+  } as const;
+
+  const handleDisconnect = async () => {
+    setIsDisconnecting(true);
+    try {
+      await BLEService.disconnect();
+      await ToyService.updateToy(toy.id, { connected: false });
+      setIsConnected(false);
+    } catch (e) {
+      console.error('Disconnect error:', e);
+    } finally {
+      setIsDisconnecting(false);
+    }
+  };
+
+  const handleForgetDevice = () => {
+    setForgetDialogVisible(true);
+  };
+
+  const confirmForgetDevice = async () => {
+    setForgetDialogVisible(false);
+    setIsDeleting(true);
+    try {
+      await BLEService.disconnect();
+      await ToyService.deleteToy(toy.id);
+      onGoBack();
+    } catch (e) {
+      console.error('Delete toy error:', e);
+      setIsDeleting(false);
     }
   };
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: '#FFFFFF' }}>
-      <VStack flex={1}>
-        {/* Header */}
-        <HStack justifyContent="space-between" alignItems="center" p="$4" bg="$backgroundLight0" borderBottomWidth={0.5} borderBottomColor="$borderLight300">
-          <Pressable p="$2" onPress={onGoBack} hitSlop={{top: 10, bottom: 10, left: 10, right: 10}}>
-            <Icon as={ChevronRight} size="lg" color="$textDark800" style={{ transform: [{ rotate: '180deg' }] }} />
-          </Pressable>
-          
-          <Heading size="md" color="$textDark800">{toy?.name}</Heading>
-          
-          <Pressable p="$2" onPress={() => {}}>
-            <Icon as={Settings} size="lg" color="$textDark800" />
-          </Pressable>
-        </HStack>
+    <SafeAreaView style={{ flex: 1, backgroundColor: '#F8F4E9' }}>
+      {/* Header */}
+      <HStack
+        justifyContent="space-between"
+        alignItems="center"
+        px="$4"
+        py="$3"
+        bg="$white"
+        borderBottomWidth={0.5}
+        borderBottomColor="$borderLight200"
+      >
+        <Pressable
+          onPress={onGoBack}
+          p="$2"
+          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+        >
+          <Icon as={ChevronLeft} size="xl" color="$textDark800" />
+        </Pressable>
+        <Text size="lg" fontWeight="$bold" color="$textDark800">
+          Toy Details
+        </Text>
+        {/* spacer keeps title centred */}
+        <Box w="$10" />
+      </HStack>
 
-        {/* Toy Info */}
-        <VStack p="$4" bg="$backgroundLight0" borderBottomWidth={0.5} borderBottomColor="$borderLight300">
-          <HStack alignItems="center" justifyContent="center">
-            <Avatar size="lg" bg="$primary500" mr="$3">
-              <Text color="$textLight50" fontWeight="$bold">BB</Text>
-            </Avatar>
-            <VStack alignItems="center">
-              <Text size="md" fontWeight="$bold" color="$textDark800">{toy?.name}</Text>
-              <HStack alignItems="center">
-                <Box w="$2" h="$2" bg="$success500" borderRadius="$full" mr="$2" />
-                <Text size="sm" color="$textDark800">Connected</Text>
-              </HStack>
-            </VStack>
-          </HStack>
-        </VStack>
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ paddingBottom: 32 }}
+      >
+        {/* ── Hero card ─────────────────────────────── */}
+        <Box
+          mx="$4"
+          mt="$4"
+          mb="$4"
+          borderRadius="$3xl"
+          bg="#6D8B74"
+          p="$6"
+          alignItems="center"
+          style={{
+            elevation: 8,
+            shadowColor: '#6D8B74',
+            shadowOpacity: 0.35,
+            shadowRadius: 18,
+            shadowOffset: { width: 0, height: 8 },
+          }}
+        >
+          {/* Avatar circle */}
+          <Box
+            w={88}
+            h={88}
+            borderRadius="$full"
+            justifyContent="center"
+            alignItems="center"
+            mb="$3"
+            style={{
+              backgroundColor: 'rgba(255,255,255,0.2)',
+              borderWidth: 2,
+              borderColor: 'rgba(255,255,255,0.4)',
+            }}
+          >
+            <Text style={{ fontSize: 36, fontWeight: '800', color: '#FFFFFF' }}>
+              {toy?.name?.charAt(0).toUpperCase() || 'T'}
+            </Text>
+          </Box>
 
-        {/* Tabs */}
-        <HStack bg="$backgroundLight0" borderBottomWidth={0.5} borderBottomColor="$borderLight300">
-          {tabOptions.map((tab) => (
-            <Pressable
-              key={tab.id}
+          <Text style={{ fontSize: 26, fontWeight: '700', color: '#FFFFFF', marginBottom: 10 }}>
+            {toy?.name}
+          </Text>
+
+          {/* Connection badge */}
+          <Box
+            borderRadius="$full"
+            px="$4"
+            py="$1"
+            style={{
+              backgroundColor: isConnected
+                ? 'rgba(16,185,129,0.3)'
+                : 'rgba(0,0,0,0.15)',
+              borderWidth: 1,
+              borderColor: isConnected
+                ? 'rgba(16,185,129,0.5)'
+                : 'rgba(255,255,255,0.2)',
+            }}
+          >
+            <HStack alignItems="center" space="xs">
+              <Box
+                borderRadius="$full"
+                style={{
+                  width: 7,
+                  height: 7,
+                  backgroundColor: isConnected ? '#34D399' : '#9CA3AF',
+                }}
+              />
+              <Text style={{ color: '#FFFFFF', fontSize: 12, fontWeight: '600' }}>
+                {isConnected ? 'Connected' : 'Disconnected'}
+              </Text>
+            </HStack>
+          </Box>
+        </Box>
+
+        {/* ── Quick stats ───────────────────────────── */}
+        <HStack mx="$4" mb="$4" space="sm">
+          {[
+            { label: 'Owners',    value: owners.length },
+            { label: 'Interests', value: interests.length },
+            { label: 'Sessions',  value: 0 },
+          ].map((stat) => (
+            <Box
+              key={stat.label}
               flex={1}
+              bg="$white"
+              borderRadius="$xl"
               p="$3"
               alignItems="center"
-              borderBottomWidth={activeTab === tab.id ? 2 : 0}
-              borderBottomColor="$primary500"
-              onPress={() => setActiveTab(tab.id)}
+              style={cardShadow}
             >
-              <Icon as={tab.icon} size="sm" color={activeTab === tab.id ? "$primary500" : "$textDark500"} mb="$1" />
-              <Text size="xs" color={activeTab === tab.id ? "$primary500" : "$textDark500"}>{tab.label}</Text>
-            </Pressable>
+              <Text style={{ fontSize: 22, fontWeight: '800', color: '#6D8B74' }}>
+                {stat.value}
+              </Text>
+              <Text size="xs" color="$textDark500" mt="$0.5">
+                {stat.label}
+              </Text>
+            </Box>
           ))}
         </HStack>
 
-        {/* Tab Content */}
-        <Box p="$4" flex={1} bg="$backgroundLight50">
-          <ScrollView showsVerticalScrollIndicator={false}>
-            {renderTabContent()}
+        {/* ── Talk Mode ─────────────────────────────── */}
+        <Box mx="$4" mb="$4" bg="$white" borderRadius="$xl" p="$4" style={cardShadow}>
+          <Text fontWeight="$bold" color="$textDark800" size="sm" mb="$3">
+            Talk Mode
+          </Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+            <HStack space="sm">
+              {modes.map((mode) => {
+                const active = selectedMode === mode.id;
+                return (
+                  <Pressable
+                    key={mode.id}
+                    onPress={() => setSelectedMode(mode.id)}
+                    borderRadius="$xl"
+                    px="$4"
+                    py="$3"
+                    alignItems="center"
+                    style={{
+                      minWidth: 72,
+                      backgroundColor: active ? '#6D8B74' : '#F9FAFB',
+                      borderWidth: 1,
+                      borderColor: active ? '#6D8B74' : '#E5E7EB',
+                    }}
+                  >
+                    <Text style={{ fontSize: 22, marginBottom: 4 }}>{mode.emoji}</Text>
+                    <Text
+                      size="xs"
+                      style={{ fontWeight: '600', color: active ? '#FFFFFF' : '#374151' }}
+                    >
+                      {mode.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </HStack>
           </ScrollView>
         </Box>
-      </VStack>
+
+        {/* ── Owners ────────────────────────────────── */}
+        {owners.length > 0 && (
+          <Box mx="$4" mb="$4" bg="$white" borderRadius="$xl" p="$4" style={cardShadow}>
+            <Text fontWeight="$bold" color="$textDark800" size="sm" mb="$3">
+              Owners
+            </Text>
+            <VStack space="sm">
+              {owners.map((owner: any, i: number) => (
+                <HStack
+                  key={i}
+                  alignItems="center"
+                  borderRadius="$lg"
+                  p="$3"
+                  style={{ backgroundColor: '#F8F4E9' }}
+                >
+                  <Box
+                    borderRadius="$full"
+                    justifyContent="center"
+                    alignItems="center"
+                    mr="$3"
+                    style={{ width: 36, height: 36, backgroundColor: '#6D8B74' }}
+                  >
+                    <Text style={{ color: '#FFFFFF', fontWeight: '700', fontSize: 14 }}>
+                      {owner.name?.charAt(0).toUpperCase()}
+                    </Text>
+                  </Box>
+                  <VStack flex={1}>
+                    <Text size="sm" fontWeight="$semibold" color="$textDark800">
+                      {owner.name}
+                    </Text>
+                    <Text size="xs" color="$textDark500">
+                      Age {owner.age}
+                    </Text>
+                  </VStack>
+                </HStack>
+              ))}
+            </VStack>
+          </Box>
+        )}
+
+        {/* ── Interests ─────────────────────────────── */}
+        {interests.length > 0 && (
+          <Box mx="$4" mb="$4" bg="$white" borderRadius="$xl" p="$4" style={cardShadow}>
+            <Text fontWeight="$bold" color="$textDark800" size="sm" mb="$3">
+              Interests
+            </Text>
+            <HStack flexWrap="wrap">
+              {interests.map((interest, i) => (
+                <Box
+                  key={i}
+                  borderRadius="$full"
+                  px="$3"
+                  py="$1.5"
+                  mr="$2"
+                  mb="$2"
+                  style={{ backgroundColor: interestColors[interest] || '#E5E7EB' }}
+                >
+                  <Text size="xs" style={{ fontWeight: '600', color: '#374151' }}>
+                    {interest}
+                  </Text>
+                </Box>
+              ))}
+            </HStack>
+          </Box>
+        )}
+
+        {/* ── Personality ───────────────────────────── */}
+        {!!toy?.custom_personality && (
+          <Box mx="$4" mb="$4" bg="$white" borderRadius="$xl" p="$4" style={cardShadow}>
+            <Text fontWeight="$bold" color="$textDark800" size="sm" mb="$3">
+              Personality
+            </Text>
+            <Box
+              borderRadius="$lg"
+              p="$3"
+              style={{
+                backgroundColor: '#F8F4E9',
+                borderLeftWidth: 3,
+                borderLeftColor: '#6D8B74',
+              }}
+            >
+              <Text size="sm" color="$textDark600" style={{ lineHeight: 20 }}>
+                {toy.custom_personality}
+              </Text>
+            </Box>
+          </Box>
+        )}
+
+        {/* ── Parental Controls ─────────────────────── */}
+        <Box mx="$4" mb="$4" bg="$white" borderRadius="$xl" p="$4" style={cardShadow}>
+          <Text fontWeight="$bold" color="$textDark800" size="sm" mb="$3">
+            Parental Controls
+          </Text>
+          {[
+            {
+              label: 'Safety Mode',
+              sub: 'Filters inappropriate content',
+              value: safetyMode,
+              toggle: () => setSafetyMode((p) => !p),
+            },
+            {
+              label: 'Content Filter',
+              sub: 'Age-appropriate responses only',
+              value: contentFilter,
+              toggle: () => setContentFilter((p) => !p),
+            },
+          ].map((ctrl, i, arr) => (
+            <HStack
+              key={ctrl.label}
+              justifyContent="space-between"
+              alignItems="center"
+              py="$3"
+              borderBottomWidth={i < arr.length - 1 ? 0.5 : 0}
+              borderBottomColor="$borderLight200"
+            >
+              <VStack flex={1} mr="$4">
+                <Text size="sm" fontWeight="$medium" color="$textDark800">
+                  {ctrl.label}
+                </Text>
+                <Text size="xs" color="$textDark500">
+                  {ctrl.sub}
+                </Text>
+              </VStack>
+              <Pressable
+                onPress={ctrl.toggle}
+                borderRadius="$full"
+                style={{
+                  width: 44,
+                  height: 24,
+                  backgroundColor: ctrl.value ? '#6D8B74' : '#D1D5DB',
+                  justifyContent: 'center',
+                }}
+              >
+                <Box
+                  bg="$white"
+                  borderRadius="$full"
+                  position="absolute"
+                  style={{
+                    width: 20,
+                    height: 20,
+                    transform: [{ translateX: ctrl.value ? 22 : 2 }],
+                  }}
+                />
+              </Pressable>
+            </HStack>
+          ))}
+        </Box>
+
+        {/* ── Device Actions ────────────────────────── */}
+        <VStack mx="$4" mb="$4" space="sm">
+          {/* Disconnect */}
+          {isConnected && (
+            <Pressable
+              onPress={handleDisconnect}
+              disabled={isDisconnecting}
+              borderRadius="$xl"
+              p="$4"
+              bg="$white"
+              style={{
+                ...cardShadow,
+                opacity: isDisconnecting ? 0.6 : 1,
+                borderWidth: 1.5,
+                borderColor: '#6D8B74',
+              }}
+            >
+              <HStack alignItems="center" justifyContent="center" space="sm">
+                {isDisconnecting ? (
+                  <ActivityIndicator size="small" color="#6D8B74" />
+                ) : (
+                  <Icon as={WifiOff} size="sm" color="#6D8B74" />
+                )}
+                <Text style={{ fontWeight: '600', color: '#6D8B74', fontSize: 15 }}>
+                  {isDisconnecting ? 'Disconnecting...' : 'Disconnect'}
+                </Text>
+              </HStack>
+            </Pressable>
+          )}
+
+          {/* Forget Device */}
+          <Pressable
+            onPress={handleForgetDevice}
+            disabled={isDeleting}
+            borderRadius="$xl"
+            p="$4"
+            style={{
+              ...cardShadow,
+              opacity: isDeleting ? 0.6 : 1,
+              backgroundColor: '#FFF1F2',
+              borderWidth: 1.5,
+              borderColor: '#FDA4AF',
+            }}
+          >
+            <HStack alignItems="center" justifyContent="center" space="sm">
+              {isDeleting ? (
+                <ActivityIndicator size="small" color="#E11D48" />
+              ) : (
+                <Icon as={Trash2} size="sm" color="#E11D48" />
+              )}
+              <Text style={{ fontWeight: '600', color: '#E11D48', fontSize: 15 }}>
+                {isDeleting ? 'Removing...' : 'Forget Device'}
+              </Text>
+            </HStack>
+          </Pressable>
+        </VStack>
+      </ScrollView>
+
+      {/* ── Forget Device Dialog ──────────────────── */}
+      <Modal
+        visible={forgetDialogVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setForgetDialogVisible(false)}
+      >
+        <View
+          style={{
+            flex: 1,
+            backgroundColor: 'rgba(0,0,0,0.5)',
+            justifyContent: 'center',
+            alignItems: 'center',
+            paddingHorizontal: 32,
+          }}
+        >
+          <View
+            style={{
+              backgroundColor: '#FFFFFF',
+              borderRadius: 24,
+              padding: 28,
+              width: '100%',
+              alignItems: 'center',
+              shadowColor: '#000',
+              shadowOpacity: 0.2,
+              shadowRadius: 24,
+              shadowOffset: { width: 0, height: 8 },
+              elevation: 16,
+            }}
+          >
+            {/* Icon */}
+            <View
+              style={{
+                width: 72,
+                height: 72,
+                borderRadius: 36,
+                backgroundColor: '#FFF1F2',
+                justifyContent: 'center',
+                alignItems: 'center',
+                marginBottom: 20,
+                borderWidth: 6,
+                borderColor: '#FFE4E6',
+              }}
+            >
+              <Icon as={Trash2} size="lg" color="#E11D48" />
+            </View>
+
+            {/* Title */}
+            <Text
+              style={{
+                fontSize: 20,
+                fontWeight: '700',
+                color: '#111827',
+                marginBottom: 10,
+                textAlign: 'center',
+              }}
+            >
+              Forget Device
+            </Text>
+
+            {/* Body */}
+            <Text
+              style={{
+                fontSize: 14,
+                color: '#6B7280',
+                textAlign: 'center',
+                lineHeight: 22,
+                marginBottom: 28,
+              }}
+            >
+              Are you sure you want to remove{' '}
+              <Text style={{ fontWeight: '700', color: '#111827' }}>
+                {toy?.name}
+              </Text>
+              {' '}from your account?{'\n'}This action cannot be undone.
+            </Text>
+
+            {/* Buttons */}
+            <HStack space="sm" w="$full">
+              {/* Cancel */}
+              <Pressable
+                flex={1}
+                onPress={() => setForgetDialogVisible(false)}
+                borderRadius="$xl"
+                py="$3"
+                style={{
+                  backgroundColor: '#F8F4E9',
+                  borderWidth: 1.5,
+                  borderColor: '#D1D5DB',
+                  alignItems: 'center',
+                }}
+              >
+                <Text style={{ fontWeight: '600', color: '#374151', fontSize: 15 }}>
+                  Cancel
+                </Text>
+              </Pressable>
+
+              {/* Remove */}
+              <Pressable
+                flex={1}
+                onPress={confirmForgetDevice}
+                borderRadius="$xl"
+                py="$3"
+                style={{
+                  backgroundColor: '#E11D48',
+                  alignItems: 'center',
+                  shadowColor: '#E11D48',
+                  shadowOpacity: 0.4,
+                  shadowRadius: 8,
+                  shadowOffset: { width: 0, height: 4 },
+                  elevation: 6,
+                }}
+              >
+                <Text style={{ fontWeight: '700', color: '#FFFFFF', fontSize: 15 }}>
+                  Remove
+                </Text>
+              </Pressable>
+            </HStack>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 };

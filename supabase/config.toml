@@ -1,6 +1,17 @@
 # Supabase Config File
 # Reference: https://supabase.com/docs/guides/functions/config
 
+# Voice Processing Functions
+[functions.stt-processing]
+verify_jwt = true
+
+[functions.llm-processing]
+verify_jwt = true
+
+[functions.tts-processing]
+verify_jwt = true
+
+# Payment Functions
 [functions.create-payment-intent]
 verify_jwt = true
 

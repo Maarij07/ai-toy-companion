@@ -7,6 +7,9 @@ export { default as PaymentService } from './PaymentService';
 
 // Export voice processing services
 export { default as BLEService } from './BLEService';
+export { default as ESP32Service } from './ESP32Service';
+export type { ESP32Message } from './ESP32Service';
+export { NUS_SERVICE_UUID, NUS_RX_UUID, NUS_TX_UUID } from './ESP32Service';
 export { default as WhisperService } from './WhisperService';
 export { default as GoogleSTTService } from './GoogleSTTService';
 export { default as LLMService } from './LLMService';

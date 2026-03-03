@@ -62,26 +62,35 @@ interface MarketplaceScreenProps {
   onNavigateToProductDetail?: (product: Product) => void;
 }
 
+// ── Module-level cache (survives tab switches, cleared after 5 min) ──────────
+let _productsCache: Product[] | null = null;
+let _productsCacheAt = 0;
+const PRODUCTS_TTL = 5 * 60 * 1000; // 5 minutes
+
 const MarketplaceScreen: React.FC<MarketplaceScreenProps> = ({ navigation, onNavigateToProductDetail }) => {
   const [activeTab, setActiveTab] = useState('All');
   const [searchQuery, setSearchQuery] = useState('');
   const [showClearButton, setShowClearButton] = useState(false);
-  
-  const [marketplaceItems, setMarketplaceItems] = useState<Product[]>([]);
-  const [loading, setLoading] = useState(true);
-  
-  // Fetch products from Supabase
+
+  const [marketplaceItems, setMarketplaceItems] = useState<Product[]>(_productsCache ?? []);
+  const [loading, setLoading] = useState(_productsCache === null);
+
+  // Fetch products from Supabase (skipped when cache is fresh)
   useEffect(() => {
+    const now = Date.now();
+    if (_productsCache && now - _productsCacheAt < PRODUCTS_TTL) {
+      // Cache is still fresh — nothing to do, state already seeded above
+      return;
+    }
+
     const fetchProducts = async () => {
       try {
         const { data, error } = await ProductService.getAllProducts();
-        
+
         if (error) {
           console.error('Error fetching products:', error);
-          // Fallback to mock data if there's an error
           setMarketplaceItems(mockProducts);
         } else if (data) {
-          // Convert Supabase data to our Product format
           const formattedProducts = (data as any[]).map((item: any) => ({
             id: typeof item.id === 'string' ? parseInt(item.id) : item.id,
             name: item.name,
@@ -98,21 +107,20 @@ const MarketplaceScreen: React.FC<MarketplaceScreenProps> = ({ navigation, onNav
             features: Array.isArray(item.features) ? item.features : [],
             description: item.description,
           }));
-          
+          _productsCache = formattedProducts;
+          _productsCacheAt = Date.now();
           setMarketplaceItems(formattedProducts);
         } else {
-          // If data is null, use mock data
           setMarketplaceItems(mockProducts);
         }
       } catch (error) {
         console.error('Unexpected error fetching products:', error);
-        // Fallback to mock data
         setMarketplaceItems(mockProducts);
       } finally {
         setLoading(false);
       }
     };
-    
+
     fetchProducts();
   }, []);
   
