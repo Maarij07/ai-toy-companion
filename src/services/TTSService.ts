@@ -127,6 +127,58 @@ class TTSService {
   }
 
   /**
+   * Get TTS audio URL without downloading (for direct playback)
+   */
+  async getAudioUrl(text: string): Promise<{ url: string; success: boolean; error: string }> {
+    try {
+      if (!this.isInitialized) {
+        return { url: '', success: false, error: 'TTS service not initialized' };
+      }
+
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+
+      if (!token) {
+        return { url: '', success: false, error: 'User not authenticated' };
+      }
+
+      const supabaseUrl = supabase.supabaseUrl;
+      const supabaseKey = supabase.supabaseKey;
+
+      const response = await fetch(`${supabaseUrl}/functions/v1/tts-processing`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+          'apikey': supabaseKey,
+        },
+        body: JSON.stringify({
+          text,
+          userId: session.user.id,
+          projectId: this.config?.projectId,
+          voiceId: this.config?.voiceId,
+        })
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`TTS Edge Function error: ${response.status} - ${errorText}`);
+      }
+
+      const result = await response.json();
+
+      if (!result.success) {
+        throw new Error(result.error || 'Unknown error from TTS Edge Function');
+      }
+
+      return { url: result.audioUrl, success: true, error: '' };
+    } catch (error) {
+      console.error('Error getting TTS audio URL:', error);
+      return { url: '', success: false, error: (error as Error).message };
+    }
+  }
+
+  /**
    * Check if TTS service is ready to use
    */
   isReady(): boolean {

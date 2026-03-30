@@ -8,8 +8,12 @@ import {
   ActivityIndicator,
   Modal,
   View,
+  TouchableOpacity,
 } from 'react-native';
-import BLEService from '../services/BLEService';
+import ESP32Service from '../services/ESP32Service';
+import VoiceProcessingService, { PipelineStatus } from '../services/VoiceProcessingService';
+import voiceConfig from '../config/voiceConfig';
+import ChatService, { ChatMessage } from '../services/ChatService';
 import { ToyService } from '../services/ToyService';
 import { AuthService } from '../services/AuthService';
 import { 
@@ -51,6 +55,7 @@ import MarketplaceScreen from './MarketplaceScreen';
 import CartScreen from './CartScreen';
 import SettingsScreen from './SettingsScreen';
 import ProductDetailScreen from './ProductDetailScreen';
+import ChatScreen from './ChatScreen';
 
 interface NewHomeContentProps {
   onNavigateToHome?: () => void;
@@ -73,6 +78,15 @@ const NewHomeContent = ({
   const [toys, setToys] = useState<any[]>([]);
   const [isLoadingToys, setIsLoadingToys] = useState(true);
 
+  // BLE pipeline state
+  type BLEStatus = 'idle' | 'connecting' | 'listening' | 'processing' | 'error';
+  const [bleStatus, setBleStatus] = useState<BLEStatus>('idle');
+  const [bleStatusLabel, setBleStatusLabel] = useState('');
+  const [recentMessages, setRecentMessages] = useState<ChatMessage[]>([]);
+  const [connectedToyId, setConnectedToyId] = useState<string | null>(null);
+  const bleStartedRef = useRef(false);
+  const lastToyRef = useRef<any>(null);
+
   const fadeAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
@@ -84,13 +98,158 @@ const NewHomeContent = ({
     loadToys();
   }, []);
 
+  // ── Load last 5 messages for the connected toy ──────────────────────────
+  const loadRecentMessages = async (toyId: string) => {
+    const result = await ChatService.getMessages(toyId);
+    if (result.success && result.data) {
+      setRecentMessages(result.data.slice(-5));
+    }
+  };
+
+  // ── Start the BLE → STT → LLM → DB → TTS → BLE pipeline ───────────────
+  const handleReconnect = async () => {
+    const toy = lastToyRef.current;
+    if (!toy) return;
+    setBleStatus('connecting');
+    setBleStatusLabel('Reconnecting...');
+    const connected = await VoiceProcessingService.reconnectToESP32();
+    if (!connected) {
+      setBleStatus('error');
+      setBleStatusLabel('Could not reconnect');
+      setTimeout(() => { setBleStatus('idle'); setBleStatusLabel(''); }, 4000);
+      return;
+    }
+    setConnectedToyId(toy.id);
+    setBleStatus('listening');
+    setBleStatusLabel('Listening...');
+    // Re-subscribe and restart pipeline with same toy
+    await VoiceProcessingService.startListeningToToy(
+      (_success, error) => {
+        if (error && error !== 'empty_recording') {
+          setBleStatus('error');
+          setBleStatusLabel(error);
+          setTimeout(() => { setBleStatus('listening'); setBleStatusLabel('Listening...'); }, 4000);
+        } else {
+          setBleStatus('listening');
+          setBleStatusLabel('Listening...');
+        }
+        if (!error || error !== 'empty_recording') loadRecentMessages(toy.id);
+      },
+      toy.custom_personality ||
+        `You are ${toy.name}, a friendly AI toy companion for children. Respond warmly, keep answers short and fun.`,
+      (status: PipelineStatus) => {
+        const statusMap: Record<PipelineStatus, string> = {
+          transcribing: 'Understanding speech...',
+          thinking:     'Thinking of a response...',
+          saving:       'Saving conversation...',
+          sending:      'Sending response to toy...',
+          idle:         'Listening...',
+        };
+        setBleStatus(status === 'idle' ? 'listening' : 'processing');
+        setBleStatusLabel(statusMap[status]);
+      }
+    );
+  };
+
+  const startBLEPipeline = async (toy: any) => {
+    lastToyRef.current = toy;
+    setBleStatus('connecting');
+    setBleStatusLabel('Connecting to toy...');
+
+    // If already connected to a different toy, disconnect first
+    if (ESP32Service.isConnected() && connectedToyId && connectedToyId !== toy.id) {
+      await VoiceProcessingService.disconnectFromESP32();
+      setConnectedToyId(null);
+    }
+
+    // Initialise AI services and bind the toyId for chat logging
+    await VoiceProcessingService.initialize({
+      toyId: toy.id,
+      geminiApiKey: voiceConfig.geminiApiKey,
+      useGeminiLive: voiceConfig.useGeminiLive,
+    });
+
+    // Physically connect via BLE if not already connected
+    if (!ESP32Service.isConnected()) {
+      const connected = await VoiceProcessingService.connectToESP32();
+      if (!connected) {
+        setBleStatus('error');
+        setBleStatusLabel('Could not connect to toy via Bluetooth');
+        bleStartedRef.current = false;
+        return;
+      }
+    }
+
+    setConnectedToyId(toy.id);
+    setBleStatus('listening');
+    setBleStatusLabel('Listening...');
+    loadRecentMessages(toy.id);
+
+    // Reset pipeline state when BLE connection drops (device off or manual disconnect)
+    // lastToyRef is intentionally kept so the Reconnect button can appear
+    ESP32Service.setDisconnectHandler(() => {
+      setBleStatus('idle');
+      setBleStatusLabel('');
+      setConnectedToyId(null);
+      bleStartedRef.current = false;
+    });
+
+    // Register the auto-receive handler — fires for every recording pushed by ESP32
+    await VoiceProcessingService.startListeningToToy(
+      (_success, error) => {
+        if (error && error !== 'empty_recording') {
+          console.error('Pipeline error:', error);
+          // Show error briefly, then return to listening
+          setBleStatus('error');
+          setBleStatusLabel(error);
+          setTimeout(() => {
+            setBleStatus('listening');
+            setBleStatusLabel('Listening...');
+          }, 4000);
+        } else {
+          setBleStatus('listening');
+          setBleStatusLabel('Listening...');
+        }
+        if (!error || error !== 'empty_recording') {
+          loadRecentMessages(toy.id);
+        }
+      },
+      toy.custom_personality ||
+        `You are ${toy.name}, a friendly AI toy companion for children. Respond warmly, keep answers short and fun.`,
+      (status: PipelineStatus) => {
+        // Show real-time progress while a recording is being processed
+        const statusMap: Record<PipelineStatus, string> = {
+          transcribing: 'Understanding speech...',
+          thinking:     'Thinking of a response...',
+          saving:       'Saving conversation...',
+          sending:      'Sending response to toy...',
+          idle:         'Listening...',
+        };
+        if (status === 'idle') {
+          setBleStatus('listening');
+        } else {
+          setBleStatus('processing');
+        }
+        setBleStatusLabel(statusMap[status]);
+      }
+    );
+  };
+
   const loadToys = async () => {
     try {
       setIsLoadingToys(true);
       const { data: sessionData } = await AuthService.getSession();
       if (!sessionData?.session?.user?.id) return;
       const { data: toysData } = await ToyService.getUserToys(sessionData.session.user.id);
-      if (toysData) setToys(toysData);
+      if (toysData) {
+        setToys(toysData);
+        // Auto-start BLE pipeline for the first connected toy (once per mount)
+        const connectedToy = (toysData as any[]).find(t => t.connected);
+        if (connectedToy && !bleStartedRef.current) {
+          bleStartedRef.current = true;
+          startBLEPipeline(connectedToy);
+        }
+      }
     } catch (e) {
       // silently fail, toys stays []
     } finally {
@@ -179,10 +338,51 @@ const NewHomeContent = ({
                       <HStack alignItems="center">
                         <Box w="$2" h="$2" bg={toy.connected ? "$success500" : "$warning500"} borderRadius="$full" mr="$2" />
                         <Text size="sm" color="$textDark800">{toy.connected ? 'Connected' : 'Disconnected'}</Text>
+                        {toy.id === connectedToyId && bleStatus === 'listening' && (
+                          <Text size="xs" color="$success600" ml="$2">· Listening</Text>
+                        )}
+                        {toy.id === connectedToyId && bleStatus === 'processing' && (
+                          <Text size="xs" color="$warning600" ml="$2">· {bleStatusLabel}</Text>
+                        )}
+                        {toy.id === connectedToyId && bleStatus === 'connecting' && (
+                          <Text size="xs" color="$textDark400" ml="$2">· Connecting...</Text>
+                        )}
+                        {toy.id === connectedToyId && bleStatus === 'error' && (
+                          <Text size="xs" color="$error600" ml="$2">· {bleStatusLabel}</Text>
+                        )}
                       </HStack>
                     </VStack>
                   </HStack>
-                  <Icon as={ChevronRight} size="md" color="$textDark500" />
+                  {toy.id === connectedToyId && bleStatus !== 'idle' ? (
+                    // Active toy — no button, status shown inline
+                    <Icon as={ChevronRight} size="md" color="$textDark500" />
+                  ) : toy.id === lastToyRef.current?.id && bleStatus === 'idle' ? (
+                    // Last toy lost connection — show Reconnect
+                    <Pressable
+                      onPress={(e) => { e.stopPropagation?.(); handleReconnect(); }}
+                      bg="$primary500"
+                      borderRadius="$md"
+                      px="$3"
+                      py="$1"
+                    >
+                      <Text size="xs" color="$white" fontWeight="$semibold">Reconnect</Text>
+                    </Pressable>
+                  ) : toy.id !== connectedToyId ? (
+                    // Different toy — allow connecting to it
+                    <Pressable
+                      onPress={(e) => { e.stopPropagation?.(); startBLEPipeline(toy); }}
+                      bg="$backgroundLight100"
+                      borderRadius="$md"
+                      px="$3"
+                      py="$1"
+                      borderWidth={1}
+                      borderColor="$primary500"
+                    >
+                      <Text size="xs" color="$primary500" fontWeight="$semibold">Connect</Text>
+                    </Pressable>
+                  ) : (
+                    <Icon as={ChevronRight} size="md" color="$textDark500" />
+                  )}
                 </HStack>
               </Pressable>
             ))
@@ -256,13 +456,81 @@ const NewHomeContent = ({
 
           {/* Recent Activity */}
           <VStack>
-            <Heading size="sm" mb="$3" color="$textDark800">Recent Activity</Heading>
-            <Box bg="$backgroundLight0" borderRadius="$lg" p="$5" alignItems="center">
-              <Icon as={MessageSquare} size="lg" color="$textDark400" mb="$2" />
-              <Text size="sm" color="$textDark500" textAlign="center">
-                Connect a toy to see recent activity
-              </Text>
-            </Box>
+            <HStack justifyContent="space-between" alignItems="center" mb="$3">
+              <Heading size="sm" color="$textDark800">Recent Activity</Heading>
+              {bleStatus === 'error' && (
+                <Text size="xs" color="$error600">{bleStatusLabel}</Text>
+              )}
+            </HStack>
+
+            {/* BLE status banner */}
+            {connectedToyId && bleStatus !== 'idle' && bleStatus !== 'error' && (
+              <HStack
+                bg="$backgroundLight0"
+                borderRadius="$lg"
+                p="$3"
+                mb="$3"
+                alignItems="center"
+                space="sm"
+              >
+                <Box
+                  w={8}
+                  h={8}
+                  borderRadius="$full"
+                  bg={
+                    bleStatus === 'listening'
+                      ? '$success500'
+                      : bleStatus === 'processing'
+                      ? '$warning500'
+                      : '$textDark300'
+                  }
+                />
+                <Icon
+                  as={bleStatus === 'listening' ? Wifi : WifiOff}
+                  size="sm"
+                  color={bleStatus === 'listening' ? '$success600' : '$warning600'}
+                />
+                <Text size="sm" color="$textDark700">{bleStatusLabel}</Text>
+              </HStack>
+            )}
+
+            {/* Last messages from the toy */}
+            {recentMessages.length > 0 ? (
+              recentMessages.map(msg => (
+                <Box
+                  key={msg.id}
+                  bg="$backgroundLight0"
+                  borderRadius="$lg"
+                  p="$3"
+                  mb="$2"
+                >
+                  <HStack justifyContent="space-between" mb="$1">
+                    <Text
+                      size="xs"
+                      fontWeight="$bold"
+                      color={msg.message_type === 'user' ? '$primary500' : '$textDark500'}
+                    >
+                      {msg.message_type === 'user' ? 'Child' : 'Buddy'}
+                    </Text>
+                    <Text size="xs" color="$textDark400">
+                      {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </Text>
+                  </HStack>
+                  <Text size="sm" color="$textDark700" numberOfLines={2}>
+                    {msg.content}
+                  </Text>
+                </Box>
+              ))
+            ) : (
+              <Box bg="$backgroundLight0" borderRadius="$lg" p="$5" alignItems="center">
+                <Icon as={MessageSquare} size="lg" color="$textDark400" mb="$2" />
+                <Text size="sm" color="$textDark500" textAlign="center">
+                  {connectedToyId
+                    ? 'No conversations yet — the toy is listening'
+                    : 'Connect a toy to see recent activity'}
+                </Text>
+              </Box>
+            )}
           </VStack>
         </Animated.View>
       </ScrollView>
@@ -276,8 +544,10 @@ const ToyDetailScreen = ({ toy, onGoBack }: { toy: any; onGoBack: () => void }) 
   const [contentFilter, setContentFilter] = useState(true);
   const [isConnected, setIsConnected] = useState<boolean>(!!toy?.connected);
   const [isDisconnecting, setIsDisconnecting] = useState(false);
+  const [isReconnecting, setIsReconnecting] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [forgetDialogVisible, setForgetDialogVisible] = useState(false);
+  const [chatVisible, setChatVisible] = useState(false);
 
   const owners: any[] = toy?.toy_owners || [];
   const interests: string[] = (toy?.toy_interests || []).map((i: any) => i.interest || i);
@@ -312,13 +582,29 @@ const ToyDetailScreen = ({ toy, onGoBack }: { toy: any; onGoBack: () => void }) 
   const handleDisconnect = async () => {
     setIsDisconnecting(true);
     try {
-      await BLEService.disconnect();
+      await VoiceProcessingService.disconnectFromESP32();
       await ToyService.updateToy(toy.id, { connected: false });
       setIsConnected(false);
     } catch (e) {
       console.error('Disconnect error:', e);
     } finally {
       setIsDisconnecting(false);
+    }
+  };
+
+  const handleReconnectDevice = async () => {
+    setIsReconnecting(true);
+    try {
+      const connected = await VoiceProcessingService.reconnectToESP32();
+      if (connected) {
+        await ToyService.updateToy(toy.id, { connected: true });
+        setIsConnected(true);
+      }
+      // If not connected, device is simply off/out of range — no crash, just stays disconnected
+    } catch {
+      // Scan timeout or BLE error — toy is not nearby or not powered on, ignore silently
+    } finally {
+      setIsReconnecting(false);
     }
   };
 
@@ -330,7 +616,7 @@ const ToyDetailScreen = ({ toy, onGoBack }: { toy: any; onGoBack: () => void }) 
     setForgetDialogVisible(false);
     setIsDeleting(true);
     try {
-      await BLEService.disconnect();
+      await VoiceProcessingService.disconnectFromESP32();
       await ToyService.deleteToy(toy.id);
       onGoBack();
     } catch (e) {
@@ -502,6 +788,32 @@ const ToyDetailScreen = ({ toy, onGoBack }: { toy: any; onGoBack: () => void }) 
               })}
             </HStack>
           </ScrollView>
+        </Box>
+
+        {/* ── Chat History Button ───────────────────── */}
+        <Box mx="$4" mb="$4">
+          <Pressable
+            onPress={() => setChatVisible(true)}
+            borderRadius="$xl"
+            px="$4"
+            py="$4"
+            bg="#6D8B74"
+            alignItems="center"
+            style={{
+              elevation: 4,
+              shadowColor: '#6D8B74',
+              shadowOpacity: 0.3,
+              shadowRadius: 8,
+              shadowOffset: { width: 0, height: 4 },
+            }}>
+            <Text style={{ fontSize: 18, marginBottom: 6 }}>💬</Text>
+            <Text style={{ fontWeight: '700', color: '#FFFFFF', fontSize: 15 }}>
+              View Chat History
+            </Text>
+            <Text style={{ fontWeight: '500', color: 'rgba(255,255,255,0.7)', fontSize: 12, marginTop: 2 }}>
+              See all conversations
+            </Text>
+          </Pressable>
         </Box>
 
         {/* ── Owners ────────────────────────────────── */}
@@ -682,6 +994,34 @@ const ToyDetailScreen = ({ toy, onGoBack }: { toy: any; onGoBack: () => void }) 
             </Pressable>
           )}
 
+          {/* Reconnect */}
+          {!isConnected && (
+            <Pressable
+              onPress={handleReconnectDevice}
+              disabled={isReconnecting}
+              borderRadius="$xl"
+              p="$4"
+              bg="$white"
+              style={{
+                ...cardShadow,
+                opacity: isReconnecting ? 0.6 : 1,
+                borderWidth: 1.5,
+                borderColor: '#6D8B74',
+              }}
+            >
+              <HStack alignItems="center" justifyContent="center" space="sm">
+                {isReconnecting ? (
+                  <ActivityIndicator size="small" color="#6D8B74" />
+                ) : (
+                  <Icon as={Wifi} size="sm" color="#6D8B74" />
+                )}
+                <Text style={{ fontWeight: '600', color: '#6D8B74', fontSize: 15 }}>
+                  {isReconnecting ? 'Reconnecting...' : 'Reconnect'}
+                </Text>
+              </HStack>
+            </Pressable>
+          )}
+
           {/* Forget Device */}
           <Pressable
             onPress={handleForgetDevice}
@@ -831,6 +1171,18 @@ const ToyDetailScreen = ({ toy, onGoBack }: { toy: any; onGoBack: () => void }) 
           </View>
         </View>
       </Modal>
+
+      {/* Chat Modal */}
+      <Modal
+        visible={chatVisible}
+        animationType="slide"
+        onRequestClose={() => setChatVisible(false)}>
+        <ChatScreen
+          toyId={toy.id}
+          toyName={toy.name}
+          onClose={() => setChatVisible(false)}
+        />
+      </Modal>
     </SafeAreaView>
   );
 };
@@ -966,10 +1318,10 @@ const HomeScreen = ({ onNavigateToHome, onNavigateToAddToy }: { onNavigateToHome
               onPress={() => setActiveTab(tab.name)}
             >
               <VStack alignItems="center">
-                <Icon 
-                  as={tab.icon} 
-                  size="md" 
-                  color={activeTab === tab.name ? "$primary500" : "$textDark500"} 
+                <Icon
+                  as={tab.icon}
+                  size="md"
+                  color={activeTab === tab.name ? "$primary500" : "$textDark500"}
                 />
                 <Text size="xs" mt="$1" color={activeTab === tab.name ? "$primary500" : "$textDark500"}>{tab.name}</Text>
               </VStack>
@@ -977,6 +1329,7 @@ const HomeScreen = ({ onNavigateToHome, onNavigateToAddToy }: { onNavigateToHome
           ))}
         </HStack>
       )}
+
     </SafeAreaView>
   );
 };

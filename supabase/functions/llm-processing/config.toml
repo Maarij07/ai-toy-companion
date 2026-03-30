@@ -1,0 +1,2 @@
+[functions.llm-processing]
+verify_jwt = false

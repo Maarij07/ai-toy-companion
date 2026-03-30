@@ -10,13 +10,16 @@ const CHUNK_SIZE = 500; // bytes per write (binary data to ESP32)
 
 // ─── Message types parsed from the TX characteristic ────────────────────────
 export type ESP32Message =
-  | { type: 'FILE_HEADER'; filename: string; size: number }  // FILE:name:size\n
+  | { type: 'NEW_FILE';    filename: string; size: number }  // NEW:name:size\n  (firmware notifies new recording)
+  | { type: 'FILE_HEADER'; filename: string; size: number }  // FILE:name:size\n (response to SEND:name)
   | { type: 'FILE_END';    filename: string }                // END:name\n
   | { type: 'LISTENING' }                                    // LISTENING\n
   | { type: 'SAVED';       filename: string }                // SAVED:name\n
   | { type: 'ERROR';       message: string }                 // ERROR:reason\n
-  | { type: 'TEXT';        raw: string }                     // Any other text (LIST / STATUS reply)
-  | { type: 'BINARY';      data: ArrayBuffer };              // Raw binary chunk
+  | { type: 'TEXT';        raw: string }                     // Any other text (STATUS reply)
+  | { type: 'BINARY';      data: ArrayBuffer }               // Raw binary chunk
+  | { type: 'STREAM_START'; filename: string }               // STREAM_START:name\n  (live stream begins)
+  | { type: 'STREAM_END';   filename: string; dataBytes: number }; // STREAM_END:name:bytes\n
 
 // ─── Internal state for receiving a file ─────────────────────────────────────
 interface PendingReceive {
@@ -47,9 +50,11 @@ class ESP32Service {
   private isSubscribed = false;
   private pendingReceive: PendingReceive | null = null;
   private multiReceive: MultiReceive | null = null;
-  // Handler + buffer for recordings the ESP32 pushes without being asked
   private autoReceiveHandler: ((filename: string, data: ArrayBuffer) => void) | null = null;
   private autoReceiveBuffer: AutoReceiveBuffer | null = null;
+  private streamBuffer: { filename: string; chunks: ArrayBuffer[] } | null = null;
+  private pendingSendTimeout: ReturnType<typeof setTimeout> | null = null;
+  private onDisconnectHandler: (() => void) | null = null;
 
   // ── Byte / Base64 helpers ──────────────────────────────────────────────────
 
@@ -71,8 +76,12 @@ class ESP32Service {
   }
 
   private textToBase64(text: string): string {
-    const encoder = new TextEncoder();
-    return this.bytesToBase64(encoder.encode(text));
+    // TextEncoder not available in Hermes — encode ASCII manually
+    const bytes = new Uint8Array(text.length);
+    for (let i = 0; i < text.length; i++) {
+      bytes[i] = text.charCodeAt(i) & 0xff;
+    }
+    return this.bytesToBase64(bytes);
   }
 
   // ── Parse incoming TX notification ────────────────────────────────────────
@@ -89,7 +98,7 @@ class ESP32Service {
       prefix += String.fromCharCode(bytes[i]);
     }
 
-    const knownPrefixes = ['FILE:', 'END:', 'SAVED:', 'ERROR:', 'LISTEN'];
+    const knownPrefixes = ['FILE:', 'NEW:', 'END:', 'SAVED:', 'ERROR:', 'LISTEN'];
     const isTextCommand = knownPrefixes.some(p => prefix.startsWith(p));
 
     if (!isTextCommand) {
@@ -97,15 +106,28 @@ class ESP32Service {
       // bytes are printable ASCII or whitespace.
       const allPrintable = bytes.every(b => b === 10 || b === 13 || (b >= 32 && b <= 126));
       if (!allPrintable || bytes.length === 0) {
-        return { type: 'BINARY', data: bytes.buffer };
+        return { type: 'BINARY', data: bytes.buffer as ArrayBuffer };
       }
     }
 
-    // Decode as UTF-8 text and strip trailing \r\n
-    const text = new TextDecoder('utf-8').decode(bytes).replace(/[\r\n]+$/, '');
+    // Decode ASCII text — bytes already verified printable above
+    let text = '';
+    for (let i = 0; i < bytes.length; i++) {
+      text += String.fromCharCode(bytes[i]);
+    }
+    text = text.replace(/[\r\n]+$/, '');
+
+    if (text.startsWith('NEW:')) {
+      // NEW:rec_0008.wav:256  — firmware notifies app that a new recording is ready
+      const body = text.slice(4);
+      const colonIdx = body.lastIndexOf(':');
+      const filename = body.slice(0, colonIdx);
+      const size = parseInt(body.slice(colonIdx + 1), 10);
+      return { type: 'NEW_FILE', filename, size };
+    }
 
     if (text.startsWith('FILE:')) {
-      // FILE:rec_0000.wav:160204
+      // FILE:rec_0000.wav:160204  — actual file transfer start (after SEND:name request)
       const body = text.slice(5);
       const colonIdx = body.lastIndexOf(':');
       const filename = body.slice(0, colonIdx);
@@ -127,6 +149,24 @@ class ESP32Service {
 
     if (text.startsWith('LISTENING')) {
       return { type: 'LISTENING' };
+    }
+
+    if (text.startsWith('STREAM_START:')) {
+      return { type: 'STREAM_START', filename: text.slice(13) };
+    }
+
+    if (text.startsWith('STREAM_END:')) {
+      const body = text.slice(11);
+      const lastColon = body.lastIndexOf(':');
+      // Guard: if no colon found (malformed message), use full body as filename
+      if (lastColon === -1) {
+        return { type: 'STREAM_END', filename: body, dataBytes: 0 };
+      }
+      return {
+        type: 'STREAM_END',
+        filename: body.slice(0, lastColon),
+        dataBytes: parseInt(body.slice(lastColon + 1), 10) || 0,
+      };
     }
 
     return { type: 'TEXT', raw: text };
@@ -187,18 +227,52 @@ class ESP32Service {
       return;
     }
 
-    // ── Autonomous push (ESP32 sends a recording without being asked) ──────
-    // This is the main real-time pipeline path: ESP32 records → pushes file.
+    // ── Autonomous push — two protocols supported ─────────────────────────
+    //
+    // Legacy (store-and-forward):
+    //   ESP32 → NEW:filename:size   (recording saved to flash)
+    //   App   → SEND:filename       (request the file)
+    //   ESP32 → FILE:filename:size  (transfer start)
+    //           [binary chunks]
+    //   ESP32 → END:filename        (transfer complete)
+    //
+    // Live streaming (v7 firmware, BLE connected during recording):
+    //   ESP32 → STREAM_START:filename\n  (stream begins, no ACK)
+    //   ESP32 → [44-byte WAV header]     (binary, ACK per chunk)
+    //   ESP32 → [PCM chunks]             (binary, ACK per chunk)
+    //   ESP32 → STREAM_END:filename:bytes\n (stream done, no ACK)
     if (this.autoReceiveHandler) {
       switch (msg.type) {
+        // ── Live streaming ─────────────────────────────────────────────
+        case 'STREAM_START':
+          this.streamBuffer = { filename: msg.filename, chunks: [] };
+          console.log(`ESP32: live stream start — ${msg.filename}`);
+          break;
+        case 'STREAM_END':
+          if (this.streamBuffer) {
+            const chunks = this.streamBuffer.chunks.length;
+            const data = this.assembleChunks(this.streamBuffer.chunks);
+            const pcmBytes = data.byteLength > 44 ? data.byteLength - 44 : data.byteLength;
+            const durationMs = Math.round((pcmBytes / 2 / 16000) * 1000);
+            console.log(`ESP32: stream complete — ${this.streamBuffer.filename} | chunks=${chunks} total=${data.byteLength}B pcm=${pcmBytes}B ~${durationMs}ms (firmware reported ${msg.dataBytes}B)`);
+            this.autoReceiveHandler(this.streamBuffer.filename, data);
+            this.streamBuffer = null;
+          }
+          break;
+        // ── Legacy file transfer ────────────────────────────────────────
+        case 'NEW_FILE':
+          // Delay before requesting so the firmware can finish flushing the file
+          console.log(`ESP32: new recording ready — requesting ${msg.filename} in 600ms`);
+          if (this.pendingSendTimeout) clearTimeout(this.pendingSendTimeout);
+          this.pendingSendTimeout = setTimeout(() => {
+            this.pendingSendTimeout = null;
+            this.writeCommand(`SEND:${msg.filename}`).catch(e =>
+              console.error(`ESP32: SEND:${msg.filename} failed:`, e)
+            );
+          }, 600);
+          break;
         case 'FILE_HEADER':
           this.autoReceiveBuffer = { filename: msg.filename, chunks: [] };
-          console.log(`ESP32: incoming recording — ${msg.filename} (${msg.size} bytes expected)`);
-          break;
-        case 'BINARY':
-          if (this.autoReceiveBuffer) {
-            this.autoReceiveBuffer.chunks.push(msg.data);
-          }
           break;
         case 'FILE_END':
           if (this.autoReceiveBuffer) {
@@ -208,9 +282,18 @@ class ESP32Service {
             this.autoReceiveBuffer = null;
           }
           break;
+        // ── Binary chunks — routed to whichever buffer is active ────────
+        case 'BINARY':
+          if (this.streamBuffer) {
+            this.streamBuffer.chunks.push(msg.data);
+          } else if (this.autoReceiveBuffer) {
+            this.autoReceiveBuffer.chunks.push(msg.data);
+          }
+          break;
         case 'ERROR':
           console.error('ESP32 error during autonomous push:', msg.message);
           this.autoReceiveBuffer = null;
+          this.streamBuffer = null;
           break;
       }
     }
@@ -224,7 +307,7 @@ class ESP32Service {
       assembled.set(new Uint8Array(chunk), offset);
       offset += chunk.byteLength;
     }
-    return assembled.buffer;
+    return assembled.buffer as ArrayBuffer;
   }
 
   private resolveReceive(pending: PendingReceive): void {
@@ -238,16 +321,46 @@ class ESP32Service {
 
   // ── Auto-receive (unsolicited pushes from ESP32) ──────────────────────────
 
-  /**
-   * Register a handler that fires whenever the ESP32 autonomously pushes a
-   * recording (FILE_HEADER → binary chunks → FILE_END) without the app
-   * requesting it via requestFile(). This is the main real-time voice path.
-   *
-   * Must be called before subscribeToMessages().
-   */
   setAutoReceiveHandler(handler: (filename: string, data: ArrayBuffer) => void): void {
     this.autoReceiveHandler = handler;
     this.autoReceiveBuffer = null;
+  }
+
+  /**
+   * Register a callback that fires whenever the BLE connection drops
+   * (device turned off, out of range, or explicit disconnect).
+   * Use this so the UI can update state appropriately.
+   */
+  setDisconnectHandler(handler: () => void): void {
+    this.onDisconnectHandler = handler;
+  }
+
+  // ── Diagnostic: dump every service + characteristic UUID ─────────────────
+
+  async logDiscoveredServices(): Promise<void> {
+    const device = BLEService.getDevice();
+    if (!device) { console.warn('[BLE DIAG] no device'); return; }
+    try {
+      const services = await device.services();
+      console.log(`[BLE DIAG] ${services.length} service(s) on device:`);
+      for (const svc of services) {
+        console.log(`  SERVICE  ${svc.uuid}`);
+        const chars = await svc.characteristics();
+        for (const ch of chars) {
+          console.log(
+            `    CHAR   ${ch.uuid}` +
+            `  notify=${ch.isNotifiable}` +
+            `  indicate=${ch.isIndicatable}` +
+            `  writeResp=${ch.isWritableWithResponse}` +
+            `  writeNoResp=${ch.isWritableWithoutResponse}`
+          );
+        }
+      }
+      console.log('[BLE DIAG] expected NUS service : ' + NUS_SERVICE_UUID.toLowerCase());
+      console.log('[BLE DIAG] expected NUS TX char : ' + NUS_TX_UUID.toLowerCase());
+    } catch (e) {
+      console.error('[BLE DIAG] service discovery error:', e);
+    }
   }
 
   // ── Subscription ──────────────────────────────────────────────────────────
@@ -264,6 +377,11 @@ class ESP32Service {
       return;
     }
 
+    // Try MTU negotiation here — this is the last chance before streaming starts,
+    // and the result is visible in the captured log output.
+    const mtu = await BLEService.negotiateMTU(512);
+    console.log(`ESP32Service: MTU at subscribe time = ${mtu} (need ≥ 100 for audio streaming)`);
+
     await BLEService.subscribeToCharacteristic(
       NUS_SERVICE_UUID,
       NUS_TX_UUID,
@@ -271,11 +389,19 @@ class ESP32Service {
         const msg = this.parseMessage(base64Value);
         this.handleInternally(msg);
         onMessage(msg);
+        // No ACK needed — firmware v8 defaults to ackModeEnabled=false (no-ACK streaming)
       }
     );
 
     this.isSubscribed = true;
     console.log('ESP32Service: subscribed to TX characteristic');
+
+    // Send STATUS to wake firmware so it starts pushing NEW: notifications
+    try {
+      await this.writeCommand('STATUS');
+    } catch (e) {
+      console.warn('ESP32Service: STATUS ping failed:', e);
+    }
   }
 
   // ── Write helpers ──────────────────────────────────────────────────────────
@@ -291,7 +417,7 @@ class ESP32Service {
       NUS_RX_UUID,
       base64
     );
-    console.log(`ESP32 ← "${command}"`);
+
   }
 
   /** Write a raw binary chunk to the RX characteristic (without response for speed). */
@@ -442,22 +568,50 @@ class ESP32Service {
 
   // ── Connection ────────────────────────────────────────────────────────────
 
+  /** Reconnect to the last known ESP32 by device ID (no scan). */
+  async reconnect(): Promise<boolean> {
+    const connected = await BLEService.reconnect(NUS_SERVICE_UUID);
+    if (connected) {
+      this.resetState();
+      BLEService.setOnDisconnect(() => {
+        this.resetState();
+        this.onDisconnectHandler?.();
+      });
+    }
+    return connected;
+  }
+
   /** Scan for and connect to the ESP32 advertising the NUS service. */
   async connect(): Promise<boolean> {
     const connected = await BLEService.scanAndConnect(NUS_SERVICE_UUID);
     if (connected) {
-      this.isSubscribed = false; // reset so subscribeToMessages can be called again
-      this.pendingReceive = null;
-      this.multiReceive = null;
+      this.resetState();
+      // Wire up unexpected disconnect handling through BLEService
+      BLEService.setOnDisconnect(() => {
+        this.resetState();
+        this.onDisconnectHandler?.();
+      });
     }
     return connected;
   }
 
   async disconnect(): Promise<void> {
+    this.resetState();
+    await BLEService.disconnect();
+    // Fire the handler so the UI can update
+    this.onDisconnectHandler?.();
+  }
+
+  private resetState(): void {
     this.isSubscribed = false;
+    if (this.pendingSendTimeout) {
+      clearTimeout(this.pendingSendTimeout);
+      this.pendingSendTimeout = null;
+    }
     this.pendingReceive = null;
     this.multiReceive = null;
-    await BLEService.disconnect();
+    this.autoReceiveBuffer = null;
+    this.streamBuffer = null;
   }
 
   isConnected(): boolean {

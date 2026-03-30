@@ -1,0 +1,18 @@
+{
+  "name": "gemini-live-relay",
+  "version": "1.0.0",
+  "description": "Relay server — proxies Gemini Live (Vertex AI) WebSocket for the AI Toy mobile app",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.0",
+    "google-auth-library": "^9.14.0",
+    "ws": "^8.18.0"
+  }
+}

@@ -1,0 +1,2 @@
+[functions.tts-processing]
+verify_jwt = false

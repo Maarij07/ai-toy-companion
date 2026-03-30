@@ -61,11 +61,13 @@ let _cartCache: CartItem[] | null = null;
 let _cartCacheUserId: string | null = null;
 
 /** Call this from outside (e.g. after adding to cart) to force a fresh fetch */
-export const invalidateCartCache = () => { _cartCache = null; };
+export const invalidateCartCache = () => { _cartCache = null; _cartCacheUserId = null; };
 
 const CartScreen = () => {
-  const [cartItems, setCartItems] = useState<CartItem[]>(_cartCache ?? []);
-  const [loading, setLoading] = useState(_cartCache === null);
+  // Always start empty — we validate the cache userId before using it
+  const [cartItems, setCartItems] = useState<CartItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState(false);
 
   // Helper: update both React state and the module-level cache atomically
   const setCart = (updater: (prev: CartItem[]) => CartItem[]) => {
@@ -80,23 +82,29 @@ const CartScreen = () => {
   useEffect(() => {
     const fetchCartItems = async () => {
       try {
+        setFetchError(false);
         const { data: sessionData } = await AuthService.getSession();
         if (!sessionData?.session?.user) throw new Error('User not authenticated');
 
         const userId = sessionData.session.user.id;
 
-        // Return early if cache is warm for this user
+        // Return early if cache is warm for THIS user
         if (_cartCache !== null && _cartCacheUserId === userId) {
           setCartItems(_cartCache);
           setLoading(false);
           return;
         }
 
+        // Different user or no cache — always fetch fresh
+        _cartCache = null;
+        _cartCacheUserId = null;
+
         const { data, error } = await CartService.getUserCart(userId);
 
         if (error) {
           console.error('Error fetching cart items:', error);
-          setCartItems(mockCartItems);
+          setFetchError(true);
+          setCartItems([]);
         } else if (data) {
           const formattedCartItems = data.map((item: any) => ({
             id: typeof item.id === 'string' ? parseInt(item.id) : item.id,
@@ -113,11 +121,12 @@ const CartScreen = () => {
           _cartCacheUserId = userId;
           setCartItems(formattedCartItems);
         } else {
-          setCartItems(mockCartItems);
+          setCartItems([]);
         }
       } catch (error) {
         console.error('Unexpected error fetching cart items:', error);
-        setCartItems(mockCartItems);
+        setFetchError(true);
+        setCartItems([]);
       } finally {
         setLoading(false);
       }
@@ -149,37 +158,6 @@ const CartScreen = () => {
     }
   };
   
-  // Mock cart items as fallback
-  const mockCartItems: CartItem[] = [
-    {
-      id: 1,
-      name: 'Buddy the Bear',
-      price: 89.99,
-      originalPrice: 119.99,
-      image: 'https://images.unsplash.com/photo-1542282088-72c9c27ed0cd?w=400&q=80',
-      quantity: 1,
-      discount: 25,
-    },
-    {
-      id: 2,
-      name: 'Smart Elephant',
-      price: 69.99,
-      originalPrice: 89.99,
-      image: 'https://images.unsplash.com/photo-1547471080-7cc2caa01a7e?w=400&q=80',
-      quantity: 2,
-      discount: 22,
-    },
-    {
-      id: 3,
-      name: 'Dino Explorer',
-      price: 79.99,
-      originalPrice: 99.99,
-      image: 'https://images.unsplash.com/photo-1542282088-72c9c27ed0cd?w=400&q=80',
-      quantity: 1,
-      discount: 20,
-    },
-  ];
-
   const subtotal = cartItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
   const discount = cartItems.reduce((sum, item) => {
     const discountAmount = item.originalPrice
@@ -287,8 +265,17 @@ const CartScreen = () => {
           
           <VStack flex={1} justifyContent="center" alignItems="center" px="$10">
             <Icon as={ShoppingCart} size="5xl" color="$textDark300" mb="$4" />
-            <Heading size="lg" color="$textDark800" textAlign="center" mb="$2">Your cart is empty</Heading>
-            <Text size="md" color="$textDark500" textAlign="center">Add some toys to get started!</Text>
+            {fetchError ? (
+              <>
+                <Heading size="lg" color="$textDark800" textAlign="center" mb="$2">Couldn't load cart</Heading>
+                <Text size="md" color="$textDark500" textAlign="center">Check your connection and try again.</Text>
+              </>
+            ) : (
+              <>
+                <Heading size="lg" color="$textDark800" textAlign="center" mb="$2">Your cart is empty</Heading>
+                <Text size="md" color="$textDark500" textAlign="center">Add some toys to get started!</Text>
+              </>
+            )}
           </VStack>
         </VStack>
       </SafeAreaView>
@@ -313,7 +300,7 @@ const CartScreen = () => {
         
         <ScrollView contentContainerStyle={{ padding: 8, paddingBottom: 150, flexGrow: 1 }}>
           <VStack space="xs">
-            {cartItems.map(item => renderCartItem(item))}
+            {cartItems.map(item => <React.Fragment key={item.id}>{renderCartItem(item)}</React.Fragment>)}
           </VStack>
 
           {/* Promotional Banner */}

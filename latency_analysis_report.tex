@@ -1,0 +1,950 @@
+\documentclass[12pt,a4paper]{article}
+
+% ── Packages ────────────────────────────────────────────────────────────────
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{hyperref}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{longtable}
+\usepackage{xcolor}
+\usepackage{mdframed}
+\usepackage{enumitem}
+\usepackage{titlesec}
+\usepackage{fancyhdr}
+\usepackage{graphicx}
+\usepackage{microtype}
+\usepackage{parskip}
+\usepackage{tabularx}
+\usepackage{colortbl}
+\usepackage{amsmath}
+\usepackage{fontawesome5}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+
+% ── Colors ──────────────────────────────────────────────────────────────────
+\definecolor{primary}{RGB}{45, 95, 70}
+\definecolor{accent}{RGB}{109, 139, 116}
+\definecolor{warning}{RGB}{200, 80, 60}
+\definecolor{info}{RGB}{30, 90, 160}
+\definecolor{lightgray}{RGB}{245, 245, 245}
+\definecolor{darkgray}{RGB}{60, 60, 60}
+\definecolor{clientbg}{RGB}{240, 248, 255}
+\definecolor{hwbg}{RGB}{245, 250, 245}
+\definecolor{rowalt}{RGB}{248, 248, 248}
+
+% ── Section formatting ───────────────────────────────────────────────────────
+\titleformat{\section}{\large\bfseries\color{primary}}{}{0em}{}[\color{accent}\titlerule]
+\titleformat{\subsection}{\normalsize\bfseries\color{darkgray}}{}{0em}{}
+\titleformat{\subsubsection}{\normalsize\itshape\color{darkgray}}{}{0em}{}
+
+% ── Header / Footer ──────────────────────────────────────────────────────────
+\pagestyle{fancy}
+\fancyhf{}
+\rhead{\textcolor{accent}{\small AI Toy Companion — Latency Analysis}}
+\lhead{\textcolor{accent}{\small Confidential}}
+\rfoot{\textcolor{darkgray}{\small Page \thepage}}
+\lfoot{\textcolor{darkgray}{\small \today}}
+\renewcommand{\headrulewidth}{0.4pt}
+\renewcommand{\footrulewidth}{0.4pt}
+
+% ── Custom environments ──────────────────────────────────────────────────────
+\newmdenv[
+  backgroundcolor=clientbg,
+  linecolor=info,
+  linewidth=1.5pt,
+  leftmargin=0pt,
+  rightmargin=0pt,
+  innerleftmargin=12pt,
+  innerrightmargin=12pt,
+  innertopmargin=10pt,
+  innerbottommargin=10pt,
+  roundcorner=4pt
+]{clientbox}
+
+\newmdenv[
+  backgroundcolor=hwbg,
+  linecolor=primary,
+  linewidth=1.5pt,
+  leftmargin=0pt,
+  rightmargin=0pt,
+  innerleftmargin=12pt,
+  innerrightmargin=12pt,
+  innertopmargin=10pt,
+  innerbottommargin=10pt,
+  roundcorner=4pt
+]{hwbox}
+
+\newmdenv[
+  backgroundcolor=lightgray,
+  linecolor=warning,
+  linewidth=1pt,
+  leftmargin=0pt,
+  rightmargin=0pt,
+  innerleftmargin=12pt,
+  innerrightmargin=12pt,
+  innertopmargin=8pt,
+  innerbottommargin=8pt,
+  roundcorner=4pt
+]{constraintbox}
+
+% ════════════════════════════════════════════════════════════════════════════
+\begin{document}
+
+% ── Title Page ───────────────────────────────────────────────────────────────
+\begin{titlepage}
+  \centering
+  \vspace*{2cm}
+  {\color{primary}\rule{\linewidth}{1.5pt}}\\[0.4cm]
+  {\Huge\bfseries\color{primary} AI Toy Companion}\\[0.3cm]
+  {\LARGE\color{darkgray} Latency Analysis \& Architecture Options}\\[0.3cm]
+  {\color{primary}\rule{\linewidth}{1.5pt}}\\[1.5cm]
+
+  \begin{tabular}{rl}
+    \textbf{Document Type:}   & Technical Report \\[4pt]
+    \textbf{Status:}          & Draft for Review \\[4pt]
+    \textbf{Date:}            & \today \\[4pt]
+    \textbf{Prepared by:}     & Software \& Hardware Teams \\[4pt]
+    \textbf{Requested by:}    & Kiran (Client) \\
+  \end{tabular}
+
+  \vspace{2cm}
+  \begin{mdframed}[backgroundcolor=lightgray, linewidth=0pt, roundcorner=6pt,
+    innerleftmargin=16pt, innerrightmargin=16pt, innertopmargin=14pt, innerbottommargin=14pt]
+    \centering
+    \textbf{Executive Summary}\\[6pt]
+    \normalsize
+    This document responds to the client's request for a progressive chunked transfer architecture
+    to reduce end-to-end voice interaction latency. It covers the current baseline, all viable
+    options proposed by both the hardware and software teams, an honest latency estimate for each,
+    and a clear recommendation for the path forward.
+  \end{mdframed}
+
+  \vfill
+  {\small\color{darkgray} Confidential — Internal Use Only}
+\end{titlepage}
+
+% ── Table of Contents ────────────────────────────────────────────────────────
+\tableofcontents
+\newpage
+
+% ════════════════════════════════════════════════════════════════════════════
+\section{Client's Request}
+
+The following message was received from the client requesting an architecture revision:
+
+\begin{clientbox}
+\textbf{From:} Kiran \hfill \textbf{To:} Development Team\\[6pt]
+Hi Izza,
+
+Thanks for the update. A total latency of $\sim$37 seconds for a 30-second audio clip is not
+acceptable for the intended user experience.
+
+The issue appears to be that the current implementation waits for the full audio file to be
+recorded and transferred before processing begins. For v1, we should not use a full-file
+store-and-transfer approach.
+
+Please revise the flow toward:
+
+\begin{enumerate}[leftmargin=1.5em]
+  \item Progressive chunk transfer during recording
+  \item Start STT while audio is still being received
+  \item Optimise for shorter interactive utterances (e.g.\ 5--15 seconds) rather than long
+        full-file uploads
+  \item Reduce post-speech delay as much as possible before PCB is finalised
+\end{enumerate}
+
+Please let me know the expected latency if chunked transfer + early STT is implemented, and
+whether this can be tested on the current hardware before PCB order.
+
+I have mentioned this as a concern from the start and have been asking for updates for quite
+some time on this point — I also mentioned multiple times we need to do progressive chunking
+and that sending the full file would not work.
+
+\medskip
+\textit{One additional point: if chunked transfer + early STT still doesn't bring latency down
+enough, we should then evaluate a streaming / real-time STT approach as the fallback option.
+But first, please optimise the current architecture around progressive chunking and early
+processing so we can compare expected latency which is what I have been mentioning from the
+start. Anything greater than that is not ready for handover.}
+
+\medskip
+Cheers,\\
+\textbf{Kiran}
+\end{clientbox}
+
+% ════════════════════════════════════════════════════════════════════════════
+\section{Current Architecture \& Baseline Latency}
+
+\subsection{Current Data Flow}
+
+The existing implementation uses a \textbf{store-and-forward} model:
+
+\begin{enumerate}
+  \item User presses and holds the physical button on the ESP32 hardware
+  \item ESP32 reads I2S microphone data and writes it to LittleFS flash storage
+  \item When the button is released, the ESP32 sends a \texttt{NEW:filename:size} notification
+        over BLE to the mobile app
+  \item The app responds with \texttt{SEND:filename}
+  \item The ESP32 reads the file from flash and streams it in chunks over BLE
+  \item The app assembles all chunks into a complete WAV file
+  \item The complete WAV is sent to the Google STT Supabase edge function (batch request)
+  \item The transcript is sent to the Gemini LLM Supabase edge function
+  \item The LLM response is sent to the Resemble AI TTS Supabase edge function
+  \item The resulting WAV audio is sent back to the ESP32 over BLE in 500-byte chunks
+  \item The ESP32 plays the audio through the speaker
+\end{enumerate}
+
+\subsection{Baseline Latency Breakdown}
+
+The following table shows the time taken at each stage for a representative 5-second utterance
+recorded at 16\,kHz, 16-bit mono (160\,KB of audio data):
+
+\begin{table}[h!]
+\centering
+\renewcommand{\arraystretch}{1.4}
+\begin{tabularx}{\linewidth}{|l|X|r|}
+\hline
+\rowcolor{primary}
+\textcolor{white}{\textbf{Stage}} &
+\textcolor{white}{\textbf{Description}} &
+\textcolor{white}{\textbf{Duration}} \\
+\hline
+Recording          & User holds button, ESP32 captures audio via I2S & 5.0\,s \\
+\hline
+\rowcolor{rowalt}
+Flash write        & Firmware flushes audio buffer to LittleFS        & $\sim$0.5\,s \\
+\hline
+BLE transfer       & Complete WAV file streamed from ESP32 to app (ACK per chunk, 512 MTU, $\sim$30--50\,KB/s effective throughput) & $\sim$3--5\,s \\
+\hline
+\rowcolor{rowalt}
+STT (cloud batch)  & Google STT edge function processes full audio file & $\sim$1--2\,s \\
+\hline
+LLM                & Gemini Pro edge function generates response        & $\sim$1--3\,s \\
+\hline
+\rowcolor{rowalt}
+TTS                & Resemble AI edge function synthesises audio        & $\sim$1--3\,s \\
+\hline
+BLE return         & TTS WAV streamed from app to ESP32                 & $\sim$1--3\,s \\
+\hline
+\rowcolor{primary}
+\textcolor{white}{\textbf{Total}} &
+\textcolor{white}{\textbf{5-second utterance}} &
+\textcolor{white}{\textbf{$\sim$12--21\,s}} \\
+\hline
+\end{tabularx}
+\caption{Baseline latency for a 5-second utterance (current architecture)}
+\end{table}
+
+\begin{constraintbox}
+\textbf{Why 30-second clips show $\sim$37 seconds of latency:} For a 30-second utterance the
+audio data is $\sim$960\,KB. The BLE transfer of this file alone takes 18--30 seconds at current
+throughput, consistent with the 37-second figure reported by the client.
+\end{constraintbox}
+
+% ════════════════════════════════════════════════════════════════════════════
+\section{Hardware Team Response}
+
+The following options were proposed by the hardware engineering team:
+
+\begin{hwbox}
+\textbf{Hardware Team — Proposed Options}\\[8pt]
+
+\textbf{Current Baseline}\\
+The current store-and-forward architecture records the full audio clip, saves it to flash, then
+transfers it over BLE. For a 5-second utterance this results in approximately 12--15 seconds of
+total latency before a response is heard — which we agree is not acceptable for the intended
+experience.
+
+\bigskip
+\textbf{Option 1 — Aggressive Chunked Streaming (Recommended)}\\
+This is the approach you have been requesting and it is now implemented in the firmware. As soon
+as the button is pressed, audio chunks stream live over BLE to the app in real time — no waiting
+for the recording to finish. The app feeds these chunks directly into a streaming STT API (such
+as Google Speech-to-Text streaming or Deepgram) which begins transcribing while the user is still
+speaking. By the time the user releases the button, the transcript is already mostly ready. The
+LLM and TTS response then follows.
+
+\textit{Pros:} Lowest latency of all options. No hardware changes required. Can be tested on
+current hardware immediately.\\
+\textit{Cons:} Requires the app to implement a streaming STT API rather than a batch API.
+Slightly more complex app-side logic.
+
+\bigskip
+\textbf{Option 2 — On-Device LLM on the App (Phone-Side)}\\
+A lightweight local LLM such as Llama~3.2 (1B or 3B parameter model) can be run directly on the
+phone using frameworks like MediaPipe LLM Inference or llama.cpp for Android. This eliminates
+the cloud API round-trip for the LLM step entirely, saving approximately 1--2 seconds.
+
+\textit{Pros:} No internet required for the LLM step. Removes cloud API costs. Consistent latency
+regardless of network conditions.\\
+\textit{Cons:} App size increases significantly — approximately 2--4\,GB depending on model.
+Requires a mid-range or higher phone (8\,GB RAM recommended). STT and TTS would still require
+either cloud APIs or additional on-device models.
+
+\bigskip
+\textbf{Option 3 — Local Processing Entirely on MCU}\\
+This approach moves STT, LLM, and TTS processing back onto the ESP32 or a more capable companion
+MCU such as a Raspberry Pi or a dedicated edge AI module. A very small quantised model (under
+500\,MB) runs locally with no phone or cloud dependency whatsoever.
+
+\textit{Pros:} Fully offline. No app required beyond BLE control. No cloud API costs. Most
+private solution.\\
+\textit{Cons:} Constrained by MCU compute power — model quality and response intelligence will
+be noticeably limited. 4--6 second latency is the realistic floor given current edge hardware.
+Requires hardware changes before PCB is finalised.
+
+\bigskip
+\textbf{Option 4 — Hybrid Pipeline with Response Pre-fetching}\\
+This option combines Option 1 with an app-side optimisation: the app begins constructing the
+LLM prompt and pre-warming the TTS engine while STT is still streaming. As soon as the first
+sentence of the LLM response is generated, TTS converts that sentence and begins sending it to
+the ESP32 over BLE — without waiting for the full response to be generated. The user hears the
+beginning of the answer within 1.5--2 seconds of finishing their utterance.
+
+\textit{Pros:} Best perceived latency of all options — user hears a response almost immediately.
+Works with existing hardware. No MCU changes required.\\
+\textit{Cons:} Most complex app-side implementation. Requires careful pipeline coordination
+between STT, LLM, and TTS streams.
+\end{hwbox}
+
+% ════════════════════════════════════════════════════════════════════════════
+\section{Software Team Analysis}
+
+\subsection{Key Constraints}
+
+\begin{constraintbox}
+\textbf{Non-negotiable constraints for the current implementation:}
+\begin{itemize}[leftmargin=1.5em]
+  \item All AI processing routes through \textbf{Supabase Edge Functions} (Deno runtime,
+        stateless HTTP request--response only — no persistent WebSocket connections)
+  \item STT must use either \textbf{Whisper.cpp} or \textbf{Google Speech-to-Text}
+  \item Whisper.cpp is a C++ binary — it \textbf{cannot run} inside a Supabase edge function
+  \item Google STT (batch API) \textbf{returns no transcription results} for audio shorter
+        than $\sim$0.5 seconds — batch chunking of live audio does not work reliably
+  \item The Supabase architecture \textbf{cannot support streaming STT} (WebSocket or gRPC)
+        without adding a separate server
+\end{itemize}
+\end{constraintbox}
+
+\subsection{Updated Option Analysis}
+
+\subsubsection{Option 1 — Aggressive Chunked BLE Streaming}
+
+\textbf{What changes (firmware):} Remove LittleFS file storage from the recording loop.
+While the user holds the button, I2S audio data is sent directly over BLE notifications
+in real time instead of being written to flash. A start marker is sent at the beginning,
+raw PCM chunks follow, and an end marker is sent when the button is released.
+
+\textbf{What changes (app):} The app accumulates BLE chunks as they arrive. The moment the
+end marker is received, the \emph{complete} audio is passed to the STT pipeline (Google STT
+batch). There is no post-recording BLE transfer delay because transfer happened concurrently
+with recording.
+
+\textbf{Important caveat on ``early STT'' during streaming:} The hardware team's proposal to
+feed live chunks into a streaming STT API cannot be implemented within our current constraints.
+Google STT batch API requires a minimum audio length to return results, and sending sub-second
+fragments produces empty responses. Streaming STT (Google STT Streaming API, Deepgram) requires
+a persistent WebSocket or gRPC connection which Supabase edge functions do not support.
+
+\begin{table}[h!]
+\centering
+\renewcommand{\arraystretch}{1.3}
+\begin{tabularx}{\linewidth}{|l|X|}
+\hline
+\rowcolor{primary}
+\textcolor{white}{\textbf{Aspect}} & \textcolor{white}{\textbf{Detail}} \\
+\hline
+Latency saved        & Eliminates the $\sim$3--5\,s post-recording BLE transfer \\
+\hline
+\rowcolor{rowalt}
+New total estimate   & $\sim$8--13\,s for a 5-second utterance \\
+\hline
+Feasibility          & High — firmware change only, no infrastructure change \\
+\hline
+\rowcolor{rowalt}
+Risk                 & BLE must sustain 32\,KB/s (16\,kHz $\times$ 16-bit $\times$ 1ch) in real time; recording is lost if BLE drops during capture \\
+\hline
+Hardware change      & Yes — firmware refactor of recording loop \\
+\hline
+\rowcolor{rowalt}
+App change           & Minor — accumulate chunks then run pipeline on END signal \\
+\hline
+\end{tabularx}
+\caption{Option 1 summary}
+\end{table}
+
+\subsubsection{Option 2 — On-Device LLM on Phone}
+
+The hardware team proposes running Llama~3.2 (1B--3B parameters) locally on the phone to
+eliminate the LLM cloud round-trip ($\sim$1--2\,s saved).
+
+\begin{table}[h!]
+\centering
+\renewcommand{\arraystretch}{1.3}
+\begin{tabularx}{\linewidth}{|l|X|}
+\hline
+\rowcolor{primary}
+\textcolor{white}{\textbf{Aspect}} & \textcolor{white}{\textbf{Detail}} \\
+\hline
+Latency saved        & $\sim$1--2\,s (cloud LLM round-trip eliminated) \\
+\hline
+\rowcolor{rowalt}
+Local inference time & 1--3\,s (1B model), 2--5\,s (3B model) on mid-range CPU — net gain is small \\
+\hline
+App size impact      & +1\,GB (1B model) to +4\,GB (3B model) — unsuitable for most app stores \\
+\hline
+\rowcolor{rowalt}
+RAM requirement      & 6--8\,GB phone RAM recommended; crashes on lower-end devices \\
+\hline
+Response quality     & Significantly below Gemini Pro \\
+\hline
+\rowcolor{rowalt}
+Feasibility          & Very Low — app size alone disqualifies for consumer deployment \\
+\hline
+Recommendation       & \textbf{Do not pursue for v1} \\
+\hline
+\end{tabularx}
+\caption{Option 2 summary}
+\end{table}
+
+\subsubsection{Option 3 — Local Processing on MCU}
+
+Moving STT, LLM, and TTS entirely onto an edge device (Raspberry Pi, ESP32-S3, or dedicated AI
+module) eliminates all cloud and phone dependencies but at a significant quality cost.
+
+\begin{table}[h!]
+\centering
+\renewcommand{\arraystretch}{1.3}
+\begin{tabularx}{\linewidth}{|l|X|}
+\hline
+\rowcolor{primary}
+\textcolor{white}{\textbf{Aspect}} & \textcolor{white}{\textbf{Detail}} \\
+\hline
+Latency estimate     & 4--8\,s (realistic floor for edge hardware with quantised models) \\
+\hline
+\rowcolor{rowalt}
+Model quality        & Severely constrained — tiny quantised models produce noticeably inferior responses \\
+\hline
+Hardware change      & Yes — significant; new MCU or companion board before PCB finalisation \\
+\hline
+\rowcolor{rowalt}
+Offline capability   & Fully offline — no internet required \\
+\hline
+Feasibility          & Medium — hardware redesign required but decision must be made before PCB finalisation \\
+\hline
+\rowcolor{rowalt}
+Recommendation       & \textbf{Evaluate in Phase 1 in parallel with Option 1} — PCB decision point \\
+\hline
+\end{tabularx}
+\caption{Option 3 summary}
+\end{table}
+
+\subsubsection{Option 4 — Hybrid Pipeline: Chunked BLE + Sentence-Level Overlapped TTS}
+
+This is the most impactful option the software team can implement on the \emph{app side} without
+any infrastructure changes. It combines Option~1 with sentence-level pipelining:
+
+\begin{enumerate}
+  \item BLE streaming during recording (Option 1) — eliminates transfer delay
+  \item When STT returns, immediately send transcript to LLM with token streaming enabled
+  \item Detect the first complete sentence in the LLM token stream
+  \item Send that sentence to TTS and begin streaming the resulting audio to ESP32
+  \item Continue for each subsequent sentence while LLM is still generating
+\end{enumerate}
+
+The user hears the \emph{first sentence} of the response approximately 1.5--3 seconds after
+releasing the button, even though the full response has not yet been generated.
+
+\begin{table}[h!]
+\centering
+\renewcommand{\arraystretch}{1.3}
+\begin{tabularx}{\linewidth}{|l|X|}
+\hline
+\rowcolor{primary}
+\textcolor{white}{\textbf{Aspect}} & \textcolor{white}{\textbf{Detail}} \\
+\hline
+Perceived latency    & \textbf{1.5--3\,s} after button release to first audio heard \\
+\hline
+\rowcolor{rowalt}
+Total response time  & 6--10\,s (full response, same as Option 1 but perceived start is much earlier) \\
+\hline
+Complexity           & High — requires LLM streaming (SSE), sentence boundary detection, concurrent TTS + BLE \\
+\hline
+\rowcolor{rowalt}
+Feasibility          & Medium — Gemini supports streaming; Supabase edge functions support SSE; firmware must handle concurrent audio receive + play \\
+\hline
+Hardware change      & No (beyond Option 1 firmware change) \\
+\hline
+\rowcolor{rowalt}
+Recommendation       & \textbf{Implement after Option 1 is stable} \\
+\hline
+\end{tabularx}
+\caption{Option 4 summary}
+\end{table}
+
+% ════════════════════════════════════════════════════════════════════════════
+\section{Latency Comparison Matrix}
+
+The following table shows realistic end-to-end latency estimates for each option applied to a
+\textbf{5-second utterance}. All times are in seconds.
+
+\begin{table}[h!]
+\centering
+\renewcommand{\arraystretch}{1.5}
+\begin{tabularx}{\linewidth}{|X|r|r|r|r|r|r|r|}
+\hline
+\rowcolor{primary}
+\textcolor{white}{\textbf{Scenario}} &
+\textcolor{white}{\textbf{Rec.}} &
+\textcolor{white}{\textbf{Transfer}} &
+\textcolor{white}{\textbf{STT}} &
+\textcolor{white}{\textbf{LLM}} &
+\textcolor{white}{\textbf{TTS}} &
+\textcolor{white}{\textbf{BLE back}} &
+\textcolor{white}{\textbf{Total}} \\
+\hline
+Baseline (current) & 5 & 4 & 1.5 & 2 & 2 & 2 & \textbf{16.5} \\
+\hline
+\rowcolor{rowalt}
+Option 1: BLE streaming & 5 & 0 & 1.5 & 2 & 2 & 2 & \textbf{12.5} \\
+\hline
+Option 2: On-device LLM & 5 & 4 & 1.5 & 2 & 2 & 2 & \textbf{16.5}$^*$ \\
+\hline
+\rowcolor{rowalt}
+Option 3: MCU local & 5 & 0 & 1 & 2 & 1 & 0 & \textbf{$\sim$9}$^\dagger$ \\
+\hline
+Option 4: Option 1 + overlapped TTS & 5 & 0 & 1.5 & 1 & 0.5$^\ddagger$ & 0.5$^\ddagger$ & \textbf{$\sim$8.5} \\
+\hline
+\rowcolor{rowalt}
+\textbf{Option 1 + 4 combined (best case)} & \textbf{5} & \textbf{0} & \textbf{1} & \textbf{1} & \textbf{0.5} & \textbf{0.5} & \textbf{$\sim$8} \\
+\hline
+\end{tabularx}
+\caption{Latency comparison (5-second utterance). $^*$LLM saved $\sim$0 net due to slow local inference. $^\dagger$Lower quality responses. $^\ddagger$Perceived latency to \emph{first} audio heard, not full response.}
+\end{table}
+
+% ════════════════════════════════════════════════════════════════════════════
+\section{Honest Assessment of the 1--2 Second Target}
+
+\begin{constraintbox}
+\textbf{The 1--2 second total latency target is not achievable with the current architecture.}
+
+Even with every optimisation applied simultaneously:
+\begin{itemize}[leftmargin=1.5em]
+  \item A 5-second utterance cannot be processed in under 5 seconds — the user must finish
+        speaking before we have audio to transcribe
+  \item Any cloud STT call adds $\sim$0.5--1.5\,s of network round-trip time
+  \item Any cloud LLM call adds $\sim$1--3\,s
+  \item Any cloud TTS call adds $\sim$0.5--2\,s
+  \item BLE audio playback back to the device adds $\sim$0.5--2\,s
+\end{itemize}
+
+The minimum achievable end-to-end latency (time from button release to first audio heard) with
+the current ESP32 + BLE + cloud AI architecture is approximately \textbf{3--5 seconds after
+speech ends}. For a 5-second utterance this means \textbf{8--10 seconds total}.
+
+This is the standard latency class for consumer voice assistants (Alexa, Google Assistant) and
+is considered acceptable for a v1 product. The 1--2 second target is only achievable with
+dedicated DSP hardware, always-on wake-word detection, on-device inference chips, and
+datacenter-proximity cloud infrastructure — none of which apply here.
+\end{constraintbox}
+
+% ════════════════════════════════════════════════════════════════════════════
+\section{Recommendation \& Implementation Priority}
+
+\subsection{Phase 1 — Immediate (before PCB finalisation)}
+
+\begin{enumerate}
+  \item \textbf{Option 1: Firmware BLE streaming during recording}
+  \begin{itemize}
+    \item Refactor the ESP32 recording loop to stream I2S chunks directly over BLE notifications
+          instead of writing to LittleFS flash
+    \item Remove the \texttt{NEW:} / \texttt{SEND:} / \texttt{FILE:} protocol; replace with
+          \texttt{REC\_START} / raw binary chunks / \texttt{REC\_END} markers
+    \item App-side: accumulate chunks, run STT pipeline on \texttt{REC\_END}
+    \item \textbf{Expected gain: eliminates 3--5\,s BLE transfer delay}
+  \end{itemize}
+
+  \item \textbf{Option 3: MCU-local processing (parallel evaluation)}
+  \begin{itemize}
+    \item Begin evaluating a companion edge AI module (e.g.\ Raspberry Pi, ESP32-S3 with
+          dedicated AI accelerator) running quantised STT, LLM, and TTS locally
+    \item This must be decided \emph{before} PCB finalisation — it requires hardware changes
+    \item Run in parallel with Option 1 so both approaches can be compared on current hardware
+    \item \textbf{Expected outcome: fully offline pipeline with no cloud dependency}
+  \end{itemize}
+\end{enumerate}
+
+\subsection{Phase 2 — After Phase 1 is stable and tested}
+
+\begin{enumerate}
+  \item \textbf{Option 4: Sentence-level overlapped TTS}
+  \begin{itemize}
+    \item Enable Gemini token streaming via SSE in the LLM edge function
+    \item App detects first sentence boundary and triggers TTS immediately
+    \item ESP32 begins playing audio while LLM is still generating remaining sentences
+    \item \textbf{Expected gain: perceived first-audio latency drops to $\sim$1.5--3\,s
+          after button release}
+  \end{itemize}
+\end{enumerate}
+
+\subsection{Phase 3 — Future consideration (v2)}
+
+\begin{enumerate}
+  \item \textbf{On-device Whisper.cpp} — if privacy or STT cost becomes a requirement,
+        integrate \texttt{whisper.rn} (the stub is already in the codebase). Whisper Tiny
+        ($\sim$40\,MB) achieves $\sim$0.3--0.8\,s on modern phones.
+\end{enumerate}
+
+\subsection{Options Not Recommended}
+
+\begin{itemize}
+  \item \textbf{On-device LLM (Option 2):} App size (1--4\,GB) is unacceptable for consumer
+        deployment. Net latency improvement is negligible due to slow on-device inference.
+  \item \textbf{Streaming STT via Supabase:} Supabase edge functions are stateless HTTP —
+        they cannot maintain the WebSocket or gRPC connection required by Google STT Streaming
+        or Deepgram. This would require adding a separate dedicated server (significant
+        infrastructure cost and complexity).
+  \item \textbf{Batch partial STT during recording:} Google STT batch API returns no
+        transcription results for audio shorter than $\sim$0.5\,s. Sending sub-second chunks
+        while recording produces empty responses and does not reduce latency.
+\end{itemize}
+
+% ════════════════════════════════════════════════════════════════════════════
+\section{Summary Table}
+
+\begin{table}[h!]
+\centering
+\renewcommand{\arraystretch}{1.5}
+\begin{tabularx}{\linewidth}{|l|X|c|c|c|}
+\hline
+\rowcolor{primary}
+\textcolor{white}{\textbf{\#}} &
+\textcolor{white}{\textbf{Latency gain}} &
+\textcolor{white}{\textbf{HW change}} &
+\textcolor{white}{\textbf{App change}} &
+\textcolor{white}{\textbf{Priority}} \\
+\hline
+Opt 1 & High ($-$3--5\,s post-speech) & Yes & Minor & \textbf{Phase 1} \\
+\hline
+\rowcolor{rowalt}
+Opt 3 & Low — quality trade-off; fully offline & Major & Minor & \textbf{Phase 1} \\
+\hline
+Opt 4 & High (perceived, first audio in 1.5--3\,s) & No & Major & \textbf{Phase 2} \\
+\hline
+\rowcolor{rowalt}
+Whisper & Medium ($-$1--1.5\,s STT) & No & Major & Phase 3 \\
+\hline
+Opt 2 & Very Low (net) & No & Major & \textbf{Not recommended} \\
+\hline
+\rowcolor{rowalt}
+Stream STT & Medium ($-$1\,s) needs new server & No & Major & \textbf{Not recommended v1} \\
+\hline
+\end{tabularx}
+\caption{Option summary and implementation priority}
+\end{table}
+
+% ════════════════════════════════════════════════════════════════════════════
+% ════════════════════════════════════════════════════════════════════════════
+\section{Client Follow-Up — Gemini Live Assessment}
+
+The following response was received after the initial report was shared:
+
+\begin{clientbox}
+\textbf{From:} Kiran \hfill \textbf{To:} Development Team\\[6pt]
+
+Thank you for the detailed report from the team, appreciate the effort to reduce the latency.
+
+I want to see if we can reduce latency even further below 3--5\,s. I'd like us to evaluate
+\textbf{Gemini Live} as a possible production-ready realtime voice architecture as I believe we
+can get into the 1--2\,s range if we use it instead potentially.
+
+My understanding is that Gemini Live is designed for continuous low-latency audio sessions over
+a stateful WebSocket, where audio is sent in progressive chunks and audio responses are also
+returned in chunks. The intended flow would be:
+
+\begin{itemize}[leftmargin=1.5em]
+  \item Toy captures audio
+  \item Toy sends progressive BLE audio chunks to the phone
+  \item Phone forwards those chunks in real time to Gemini Live
+  \item Gemini Live returns transcripts / audio response chunks
+  \item Phone either plays them directly or sends them back to the toy for speaker playback
+\end{itemize}
+
+So the BLE progressive chunking approach still remains important — the difference is that the
+phone would then forward those chunks into a realtime Gemini Live session instead of using a
+slower request/response pipeline.
+
+Please assess whether this is technically feasible with our current toy + phone setup, what
+changes would be required, and whether this would materially improve latency.
+
+\medskip
+\textbf{Kiran}
+\end{clientbox}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{What is Gemini Live?}
+
+Gemini Live (also referred to as the Gemini Multimodal Live API) is Google's real-time,
+bidirectional audio API built on top of Gemini 2.0 Flash. Unlike the separate
+STT~$\rightarrow$~LLM~$\rightarrow$~TTS pipeline currently in use, Gemini Live accepts
+\textbf{raw audio in} and returns \textbf{raw audio out} over a single persistent WebSocket
+connection. There is no separate transcription step, no separate LLM request, and no separate
+TTS call — the entire voice conversation happens inside one stateful session.
+
+Key technical properties relevant to this project:
+
+\begin{table}[h!]
+\centering
+\renewcommand{\arraystretch}{1.3}
+\begin{tabularx}{\linewidth}{|l|X|}
+\hline
+\rowcolor{primary}
+\textcolor{white}{\textbf{Property}} & \textcolor{white}{\textbf{Value}} \\
+\hline
+Transport               & Persistent WebSocket (bidirectional) \\
+\hline
+\rowcolor{rowalt}
+Audio input format      & PCM 16-bit, 16\,kHz, mono — \textbf{identical to ESP32 I2S output} \\
+\hline
+Audio output format     & PCM 16-bit, 24\,kHz, mono \\
+\hline
+\rowcolor{rowalt}
+Response start latency  & $\sim$300--800\,ms after end of speech detected \\
+\hline
+Built-in VAD            & Yes — model detects end of utterance automatically \\
+\hline
+\rowcolor{rowalt}
+Conversation memory     & Yes — full multi-turn session state maintained \\
+\hline
+Underlying model        & Gemini 2.0 Flash (same intelligence as current Gemini Pro call) \\
+\hline
+\rowcolor{rowalt}
+Barge-in support        & Yes — user can interrupt the AI mid-response \\
+\hline
+\end{tabularx}
+\caption{Gemini Live technical properties}
+\end{table}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{Feasibility Assessment}
+
+\textbf{Short answer: Yes — Gemini Live is technically feasible and is the recommended path
+to achieve the 1--2 second post-speech latency target.}
+
+The audio format is a perfect match. The ESP32 currently records 16\,kHz, 16-bit, mono PCM —
+exactly the format Gemini Live expects as input. No re-encoding or sample-rate conversion is
+needed on the firmware or the app side for the audio going \emph{in}. The response audio
+(24\,kHz PCM) may require a simple downsampling step before playback through the ESP32 speaker
+DAC, which is a minor app-side operation.
+
+The critical architectural change is that the current request--response pipeline (three separate
+cloud edge function calls: STT, LLM, TTS) is \textbf{replaced entirely} by a single persistent
+WebSocket session. This eliminates three sequential network round trips and replaces them with
+one continuous stream.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{Required Changes}
+
+\subsubsection{Firmware (ESP32)}
+
+\begin{itemize}
+  \item \textbf{Option 1 BLE streaming is a prerequisite} — audio must stream over BLE in
+        real time rather than being transferred after recording. No additional firmware change
+        beyond Option 1 is required for the audio capture side.
+  \item The audio output path (receiving and playing the AI response) remains unchanged —
+        the app still sends PCM chunks over BLE and the ESP32 plays them through the DAC.
+  \item Optional: remove LittleFS dependency entirely once BLE streaming is in place.
+\end{itemize}
+
+\subsubsection{Mobile App}
+
+\begin{itemize}
+  \item \textbf{New \texttt{GeminiLiveService}:} Manages a persistent WebSocket connection to
+        Gemini Live. Opens the session on app launch; reconnects automatically on drop.
+  \item \textbf{BLE chunk forwarding:} Each BLE audio chunk received from the ESP32 is
+        immediately written to the Gemini Live WebSocket as a \texttt{realtimeInput} message
+        — no buffering, no assembly into a full WAV file.
+  \item \textbf{Response playback:} Audio chunks returned by Gemini Live are queued and
+        streamed to the ESP32 over BLE as they arrive, without waiting for the full response.
+  \item \textbf{Remove STT, LLM, and TTS services:} The \texttt{GoogleSTTService},
+        \texttt{LLMService}, and \texttt{TTSService} edge function calls are replaced by the
+        single Gemini Live session. The Supabase edge functions for these three steps become
+        redundant.
+  \item \textbf{Personality / system prompt:} The toy's custom personality (currently sent as
+        an LLM system prompt) is sent as the Gemini Live session setup instruction at session
+        open — no change to the product behaviour.
+\end{itemize}
+
+\subsubsection{Backend Infrastructure}
+
+This is the one area where Gemini Live introduces a constraint that the current Supabase-only
+architecture cannot directly satisfy.
+
+\begin{constraintbox}
+\textbf{Supabase edge functions cannot maintain a persistent WebSocket connection to Gemini
+Live.} Edge functions are stateless HTTP handlers — they terminate after each request. A
+Gemini Live session is a long-lived WebSocket that must remain open for the duration of the
+conversation (potentially minutes). This is architecturally incompatible with Supabase edge
+functions.
+\end{constraintbox}
+
+Two approaches are available:
+
+\begin{enumerate}
+  \item \textbf{Direct connection from app (v1 / prototype):} The phone app connects to the
+        Gemini Live WebSocket directly, with the Gemini API key embedded in the app or fetched
+        from Supabase at session start. This is acceptable for a development prototype and
+        internal testing. It carries an API key exposure risk and should not be used for
+        public release without key rotation controls.
+
+  \item \textbf{Lightweight WebSocket proxy server (production):} A small Node.js or Python
+        server (deployable to Google Cloud Run, Railway, Fly.io, or Render — all have free
+        tiers) acts as a relay: it accepts the WebSocket from the phone, holds the Gemini API
+        key securely, and proxies audio frames in both directions to Gemini Live. This server
+        is stateless in terms of data (it just relays bytes) and can be deployed in minutes.
+        Supabase continues to handle authentication, database, and user management — only the
+        real-time audio relay moves to the proxy.
+\end{enumerate}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{Latency Impact}
+
+\begin{table}[h!]
+\centering
+\renewcommand{\arraystretch}{1.4}
+\begin{tabularx}{\linewidth}{|l|X|r|r|}
+\hline
+\rowcolor{primary}
+\textcolor{white}{\textbf{Stage}} &
+\textcolor{white}{\textbf{Description}} &
+\textcolor{white}{\textbf{Current}} &
+\textcolor{white}{\textbf{Gemini Live}} \\
+\hline
+Recording + BLE stream  & User speaks; chunks sent in real time  & 5.0\,s & 5.0\,s \\
+\hline
+\rowcolor{rowalt}
+Post-recording transfer & BLE file transfer after recording ends & $\sim$3--5\,s & \textbf{0\,s} \\
+\hline
+STT                     & Speech-to-text cloud call              & $\sim$1--2\,s & \textbf{0\,s} \\
+\hline
+\rowcolor{rowalt}
+LLM                     & Language model inference               & $\sim$1--3\,s & \textbf{0\,s} \\
+\hline
+TTS                     & Text-to-speech synthesis               & $\sim$1--3\,s & \textbf{0\,s} \\
+\hline
+\rowcolor{rowalt}
+Gemini Live response    & Integrated STT+LLM+TTS — first audio chunk & n/a & $\sim$0.3--0.8\,s \\
+\hline
+BLE audio to toy        & Audio chunks streamed to ESP32         & $\sim$1--3\,s & $\sim$0.5--1.5\,s \\
+\hline
+\rowcolor{primary}
+\textcolor{white}{\textbf{Post-speech latency}} &
+\textcolor{white}{\textbf{Time from button release to first audio heard}} &
+\textcolor{white}{\textbf{$\sim$7--16\,s}} &
+\textcolor{white}{\textbf{$\sim$0.8--2.3\,s}} \\
+\hline
+\end{tabularx}
+\caption{Latency comparison: current pipeline vs Gemini Live (5-second utterance)}
+\end{table}
+
+The post-speech latency with Gemini Live is estimated at \textbf{0.8--2.3 seconds} — directly
+within the 1--2 second target range the client has requested.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{Pros and Cons of Gemini Live}
+
+\begin{table}[h!]
+\centering
+\renewcommand{\arraystretch}{1.3}
+\begin{tabularx}{\linewidth}{|l|X|}
+\hline
+\rowcolor{primary}
+\textcolor{white}{\textbf{Pros}} & \textcolor{white}{\textbf{Detail}} \\
+\hline
+Latency & Post-speech response in $\sim$0.8--2.3\,s — meets the 1--2\,s target \\
+\hline
+\rowcolor{rowalt}
+Architecture simplicity & Replaces three separate cloud services (STT, LLM, TTS) with one WebSocket \\
+\hline
+Audio format match & ESP32 I2S output (16\,kHz PCM) is the exact required input format \\
+\hline
+\rowcolor{rowalt}
+Built-in VAD & Model detects end of speech — removes need for hardware VAD or button logic \\
+\hline
+Barge-in & User can interrupt the toy mid-sentence naturally \\
+\hline
+\rowcolor{rowalt}
+Conversation memory & Multi-turn context maintained within a session automatically \\
+\hline
+\end{tabularx}
+
+\vspace{6pt}
+
+\begin{tabularx}{\linewidth}{|l|X|}
+\hline
+\rowcolor{warning}
+\textcolor{white}{\textbf{Cons / Risks}} & \textcolor{white}{\textbf{Detail}} \\
+\hline
+Proxy server required & Supabase edge functions cannot maintain a persistent WebSocket; a lightweight relay server is needed for production \\
+\hline
+\rowcolor{rowalt}
+Custom voice lost & Resemble AI custom voice is replaced by Google's built-in TTS voices — personality can still be set via system prompt \\
+\hline
+API availability & Gemini Live is available on Gemini 2.0 Flash; API stability and pricing should be confirmed before committing \\
+\hline
+\rowcolor{rowalt}
+Audio output resampling & Response audio is 24\,kHz; minor app-side downsampling needed if the ESP32 DAC is configured for 16\,kHz \\
+\hline
+Significant app rewrite & GeminiLiveService replaces three existing services; requires careful testing \\
+\hline
+\end{tabularx}
+\caption{Gemini Live pros and cons}
+\end{table}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{Recommendation on Gemini Live}
+
+\begin{mdframed}[backgroundcolor=hwbg, linecolor=primary, linewidth=1.5pt, roundcorner=4pt,
+  innerleftmargin=12pt, innerrightmargin=12pt, innertopmargin=10pt, innerbottommargin=10pt]
+\textbf{Gemini Live is the recommended path if the 1--2 second latency target is a firm
+requirement for v1.}
+
+\medskip
+The proposed architecture is sound. The BLE progressive chunking (Option 1 firmware) remains
+a prerequisite and is unchanged. The key shift is replacing the three-step cloud pipeline with
+a single Gemini Live WebSocket session. This is technically feasible on the current hardware
+with no firmware changes beyond Option~1.
+
+\medskip
+\textbf{Suggested next step:} Implement a direct-connection prototype (phone $\rightarrow$
+Gemini Live, API key fetched from Supabase at session open) to validate latency on real
+hardware. If latency targets are confirmed, proceed to build the lightweight WebSocket proxy
+server for production. Total additional development effort is estimated at 3--5 days for the
+prototype and 2--3 days for the production proxy server.
+\end{mdframed}
+
+% ════════════════════════════════════════════════════════════════════════════
+\section*{Conclusion}
+
+The most impactful single change is the \textbf{firmware-side BLE streaming} during recording
+(Option~1), which eliminates the largest source of latency — the post-recording file transfer.
+Combined with sentence-level overlapped TTS (Option~4) as a Phase~2 addition, the user will
+perceive a response within \textbf{1.5--3 seconds of finishing speaking}.
+
+The total end-to-end time from button press to first audio heard is approximately
+\textbf{8--10 seconds} — however, it is important to note that \textbf{5 of those seconds are
+the recording itself} (the time the user is actively speaking). The actual processing delay
+\emph{after} the user finishes speaking is only \textbf{3--5 seconds}, which is comparable to
+mainstream consumer voice assistants such as Alexa and Google Assistant. The client should
+evaluate the acceptance criterion as \textbf{post-speech latency} (time from button release to
+first audio heard), not total elapsed time from button press.
+
+\medskip
+Following the client's follow-up request, \textbf{Gemini Live is assessed as technically
+feasible and is the clearest path to the 1--2 second post-speech latency target.} The ESP32
+audio format is a direct match for the Gemini Live input requirements. A prototype can be
+built and tested on current hardware within days. If the prototype validates the latency
+estimates, Gemini Live should be adopted as the v1 production voice architecture, with a
+lightweight WebSocket proxy server added for API key security before public release.
+
+\end{document}

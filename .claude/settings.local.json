@@ -5,7 +5,26 @@
       "Bash(wc:*)",
       "Bash(git add:*)",
       "Bash(git commit:*)",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Bash(npm install react-native-audio-recorder-player)",
+      "Bash(npm install react-native-audio-recorder-player --legacy-peer-deps)",
+      "Bash(npm install react-native-audio-recorder-player@3.6.7 --legacy-peer-deps)",
+      "Bash(node -e \"const pkg = require\\(''./node_modules/react-native-audio-recorder-player''\\); console.log\\(Object.keys\\(pkg\\)\\)\")",
+      "Bash(npm install react-native-audio-recorder-player@4 react-native-nitro-modules --legacy-peer-deps)",
+      "Bash(./gradlew clean)",
+      "Bash(npm install patch-package --legacy-peer-deps)",
+      "Bash(npx patch-package react-native-audio-recorder-player)",
+      "Bash(npm uninstall react-native-nitro-modules --legacy-peer-deps)",
+      "Bash(npx react-native run-android)",
+      "Bash(./gradlew app:installDebug -PreactNativeDevServerPort=8081)",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\(json.dumps\\(d.get\\(''codegenConfig'',''NONE''\\), indent=2\\)\\)\")",
+      "Bash(node -e \"const d=require\\(''./node_modules/react-native-ble-plx/package.json''\\); console.log\\(JSON.stringify\\(d.codegenConfig, null, 2\\)\\)\")",
+      "Bash(xargs grep -l \"codegenConfig\\\\|codegen\")",
+      "Bash(./gradlew :react-native-ble-plx:generateCodegenArtifactsFromSchema)",
+      "Bash(./gradlew :react-native-ble-plx:generateCodegenArtifactsFromSchema --stacktrace)",
+      "Bash(./gradlew :react-native-ble-plx:tasks)",
+      "Bash(grep -A5 '\"\"lib\"\"' /d/temp/development/react-native-cli/AI_Toy_Companion/tsconfig.json)",
+      "Bash(head -20 find d:/temp/development/react-native-cli/AI_Toy_Companion/node_modules/react-native-ble-plx/android -name *.java)"
     ]
   }
 }

@@ -36,15 +36,18 @@ const callGoogleSTT = async (
   apiKey: string,
   languageCode: string,
   sampleRateHertz: number,
-  encoding: string
+  encoding: string,
+  audioChannelCount: number,
 ): Promise<string> => {
   const url = `https://speech.googleapis.com/v1/speech:recognize?key=${apiKey}`;
 
-  const requestBody: GoogleSTTRequest = {
+  const requestBody = {
     config: {
       encoding,
       sampleRateHertz,
       languageCode,
+      audioChannelCount,
+      enableAutomaticPunctuation: true,
     },
     audio: {
       content: audioContent,
@@ -87,7 +90,7 @@ serve(async (req: Request) => {
   }
 
   try {
-    const { audio, userId, languageCode, sampleRateHertz, encoding } = await req.json();
+    const { audio, userId, languageCode, sampleRateHertz, audioChannelCount, encoding } = await req.json();
 
     if (!audio) {
       return new Response(JSON.stringify({ error: "Audio data is required" }), {
@@ -109,7 +112,8 @@ serve(async (req: Request) => {
       googleApiKey,
       languageCode || 'en-US',
       sampleRateHertz || 16000,
-      encoding || 'LINEAR16'
+      encoding || 'LINEAR16',
+      audioChannelCount || 1,
     );
 
     return new Response(

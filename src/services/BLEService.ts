@@ -5,9 +5,15 @@ class BLEService {
   private manager: BleManager;
   private isConnected: boolean = false;
   private device: Device | null = null;
+  private onDisconnectCallback: (() => void) | null = null;
+  private lastDeviceId: string | null = null;
 
   constructor() {
     this.manager = new BleManager();
+  }
+
+  setOnDisconnect(cb: () => void): void {
+    this.onDisconnectCallback = cb;
   }
 
   async requestPermissions(): Promise<boolean> {
@@ -98,27 +104,83 @@ class BLEService {
   private async connectToDevice(deviceId: string): Promise<void> {
     try {
       this.device = await this.manager.connectToDevice(deviceId);
-      
-      // Discover services and characteristics
+      console.log(`BLE connected, pre-MTU=${this.device.mtu ?? 'unknown'}`);
+
+      // Android needs a brief settle before MTU negotiation, and MTU must be
+      // requested BEFORE service discovery to guarantee the firmware sees it.
+      await new Promise(r => setTimeout(r, 150));
+      try {
+        const devMtu = await this.manager.requestMTUForDevice(deviceId, 512);
+        this.device = devMtu;
+        console.log(`BLE MTU negotiated: ${this.device.mtu}`);
+      } catch (e) {
+        console.warn(`BLE MTU request failed (mtu=${this.device?.mtu ?? 23}):`, e);
+      }
+
+      // Discover services after MTU is set
       await this.device.discoverAllServicesAndCharacteristics();
-      
+
+      // Listen for unexpected disconnections (device turned off, out of range, etc.)
+      this.device.onDisconnected((_error, _device) => {
+        if (this.isConnected) {
+          console.log('BLE device disconnected unexpectedly');
+          this.isConnected = false;
+          this.device = null;
+          this.onDisconnectCallback?.();
+        }
+      });
+
       this.isConnected = true;
+      this.lastDeviceId = deviceId;
       console.log('Connected to device:', deviceId);
     } catch (error) {
       console.error('Error connecting to device:', error);
       this.isConnected = false;
+      this.device = null;
     }
   }
 
   async disconnect(): Promise<void> {
-    if (this.device && this.isConnected) {
+    const device = this.device;
+    this.isConnected = false;
+    this.device = null;
+    if (device) {
       try {
-        await this.device.cancelConnection();
-        this.isConnected = false;
-        console.log('Disconnected from device');
+        await device.cancelConnection();
       } catch (error) {
-        console.error('Error disconnecting from device:', error);
+        // Device may already be disconnected — ignore
       }
+    }
+  }
+
+  /** Reconnect to the last known device by ID (no scan needed). */
+  async reconnect(serviceUUID: string): Promise<boolean> {
+    if (!this.lastDeviceId) {
+      // No remembered device — fall back to a fresh scan
+      return this.scanAndConnect(serviceUUID);
+    }
+    try {
+      const hasPermission = await this.requestPermissions();
+      if (!hasPermission) return false;
+      await this.connectToDevice(this.lastDeviceId);
+      return this.isConnected;
+    } catch {
+      // Device not available via direct connect — fall back to scan
+      return this.scanAndConnect(serviceUUID);
+    }
+  }
+
+  /** Expose MTU negotiation so callers can trigger it at the right time. */
+  async negotiateMTU(targetMtu = 512): Promise<number> {
+    if (!this.device) return 23;
+    try {
+      const d = await this.manager.requestMTUForDevice(this.device.id, targetMtu);
+      this.device = d;
+      console.log(`BLE negotiateMTU result: ${d.mtu}`);
+      return d.mtu ?? 23;
+    } catch (e) {
+      console.warn(`BLE negotiateMTU failed (current=${this.device?.mtu ?? 23}):`, e);
+      return this.device?.mtu ?? 23;
     }
   }
 

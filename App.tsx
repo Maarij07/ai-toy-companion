@@ -26,13 +26,12 @@ import OnboardingScreen from './src/components/OnboardingScreen';
 import SetupScreen from './src/components/SetupScreen';
 import SettingsScreen from './src/components/SettingsScreen';
 import HomeScreen from './src/components/HomeScreen';
-import VoiceProcessingScreen from './src/components/VoiceProcessingScreen';
 
 function App() {
   const isDarkMode = useColorScheme() === 'dark';
   const [showSplash, setShowSplash] = useState(true);
   const [isInitializing, setIsInitializing] = useState(true);
-  const [currentScreen, setCurrentScreen] = useState<'login' | 'signup' | 'forgot' | 'onboarding' | 'setup' | 'home' | 'voiceProcessing'>('login');
+  const [currentScreen, setCurrentScreen] = useState<'login' | 'signup' | 'forgot' | 'onboarding' | 'setup' | 'home'>('login');
   
   useEffect(() => {
     // Initialize app and check for existing session
@@ -101,10 +100,6 @@ function App() {
     setCurrentScreen('setup');
   };
 
-  const navigateToVoiceProcessing = () => {
-    setCurrentScreen('voiceProcessing');
-  };
-
   const renderCurrentScreen = () => {
     switch (currentScreen) {
       case 'signup':
@@ -117,8 +112,6 @@ function App() {
         return <ForgotPasswordScreen onNavigateToLogin={navigateToLogin} />;
       case 'home':
         return <HomeScreen onNavigateToHome={() => setCurrentScreen('home')} onNavigateToAddToy={navigateToSetup} />;
-      case 'voiceProcessing':
-        return <VoiceProcessingScreen />;
       case 'login':
       default:
         return <LoginScreen 

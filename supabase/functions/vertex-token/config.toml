@@ -1,0 +1,2 @@
+[functions.vertex-token]
+verify_jwt = false
