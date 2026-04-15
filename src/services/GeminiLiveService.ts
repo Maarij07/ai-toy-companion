@@ -25,6 +25,37 @@ const GEMINI_LIVE_WS_BASE =
 // How many PCM bytes per realtimeInput message (~125 ms of 16 kHz 16-bit audio)
 const STREAM_CHUNK_BYTES = 4000;
 
+// ── Debug log — circular buffer of last 40 entries, readable on-screen ────────
+const DEBUG_LOG: string[] = [];
+export function geminiDebugLog(): string[] { return [...DEBUG_LOG]; }
+export function geminiDebugClear(): void { DEBUG_LOG.length = 0; }
+
+// Intercept console.log for VPS| and GeminiLive| prefixed messages
+const _origLog = console.log.bind(console);
+console.log = (...args: any[]) => {
+  _origLog(...args);
+  const msg = args.map(a => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ');
+  if (msg.startsWith('VPS|') || msg.startsWith('GeminiLive|')) {
+    const line = `[${new Date().toISOString().slice(11,23)}] ${msg}`;
+    DEBUG_LOG.push(line);
+    if (DEBUG_LOG.length > 60) DEBUG_LOG.shift();
+  }
+};
+const _origWarn = console.warn.bind(console);
+console.warn = (...args: any[]) => {
+  _origWarn(...args);
+  const msg = args.map(a => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ');
+  if (msg.startsWith('VPS|') || msg.startsWith('GeminiLive|')) {
+    const line = `[${new Date().toISOString().slice(11,23)}] ⚠ ${msg}`;
+    DEBUG_LOG.push(line);
+    if (DEBUG_LOG.length > 60) DEBUG_LOG.shift();
+  }
+};
+
+function dbg(msg: string) {
+  console.log('GeminiLive|' + msg);
+}
+
 class GeminiLiveService {
   private ws: WebSocket | null = null;
   private ready = false;
@@ -84,23 +115,38 @@ class GeminiLiveService {
    */
   async connect(systemPrompt: string): Promise<void> {
     if (this.ws && this.ready) {
-      // reusing existing session
+      dbg('connect: reusing existing session');
       return;
     }
 
-    this.disconnect(); // clean up any stale socket
+    this.disconnect();
 
+    dbg('connect: fetching API key...');
     const apiKey = await this.fetchApiKey();
+    dbg('connect: API key ready, opening WebSocket...');
     const url    = `${GEMINI_LIVE_WS_BASE}?key=${apiKey}`;
 
     return new Promise<void>((resolve, reject) => {
-      this.setupResolve = resolve;
-      this.setupReject  = reject;
+      // 15-second connect timeout — if setupComplete never arrives
+      const connectTimer = setTimeout(() => {
+        dbg('connect: TIMEOUT waiting for setupComplete (15s)');
+        this.setupResolve = null;
+        this.setupReject  = null;
+        reject(new Error('Gemini Live connect timeout — setupComplete not received in 15s'));
+      }, 15_000);
+
+      const wrappedResolve = () => { clearTimeout(connectTimer); resolve(); };
+      const wrappedReject  = (e: Error) => { clearTimeout(connectTimer); reject(e); };
+
+      this.setupResolve = wrappedResolve;
+      this.setupReject  = wrappedReject;
 
       let ws: WebSocket;
       try {
         ws = new WebSocket(url);
+        ws.binaryType = 'arraybuffer';
       } catch (e) {
+        clearTimeout(connectTimer);
         reject(e);
         return;
       }
@@ -108,7 +154,7 @@ class GeminiLiveService {
       this.ws = ws;
 
       ws.onopen = () => {
-        console.log('GeminiLiveService: connected — sending setup');
+        dbg('connect: WS open — sending setup msg');
         const setupMsg: any = {
           setup: {
             model: 'models/gemini-3.1-flash-live-preview',
@@ -123,29 +169,52 @@ class GeminiLiveService {
           };
         }
         ws.send(JSON.stringify(setupMsg));
+        dbg('connect: setup msg sent');
       };
 
       ws.onmessage = (event: MessageEvent) => {
-        try {
-          let text: string;
-          if (event.data instanceof ArrayBuffer) {
-            const bytes = new Uint8Array(event.data);
-            let binary = '';
-            for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-            text = binary;
-          } else if (typeof event.data === 'string') {
-            text = event.data;
-          } else {
-            return;
-          }
-          this.handleMessage(JSON.parse(text));
-        } catch {
-          // ignore unparseable frames
+
+        const decodeAndHandle = (raw: string) => {
+          const tryHandle = (parsed: any) => {
+            const keys = Object.keys(parsed).join(',');
+            if (keys === 'sessionResumptionUpdate') { this.handleMessage(parsed); return; } // silent
+            dbg(`decode OK keys=${keys}`);
+            this.handleMessage(parsed);
+          };
+          // 1. Direct JSON parse (text frame)
+          try { tryHandle(JSON.parse(raw)); return; } catch {}
+          // 2. base64 → JSON
+          try { tryHandle(JSON.parse(atob(raw))); return; } catch {}
+          // 3. base64 → bytes → string → JSON
+          try {
+            const b = atob(raw); let str = '';
+            for (let i = 0; i < b.length; i++) str += b[i];
+            tryHandle(JSON.parse(str)); return;
+          } catch {}
+          dbg(`decode FAILED len=${raw.length} start=${raw.slice(0,30)}`);
+        };
+
+        if (event.data instanceof ArrayBuffer) {
+          const bytes = new Uint8Array(event.data);
+          let binary = '';
+          for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+          decodeAndHandle(binary);
+        } else if (event.data instanceof Uint8Array) {
+          let binary = '';
+          for (let i = 0; i < event.data.length; i++) binary += String.fromCharCode(event.data[i]);
+          decodeAndHandle(binary);
+        } else if (typeof event.data === 'string') {
+          decodeAndHandle(event.data);
+        } else if (event.data && typeof event.data === 'object' && typeof event.data.text === 'function') {
+          event.data.text().then((t: string) => decodeAndHandle(t)).catch((e: any) => dbg(`Blob.text error: ${e}`));
+        } else {
+          dbg(`onmessage: UNKNOWN type=${typeof event.data}`);
         }
       };
 
       ws.onerror = () => {
         console.error('GeminiLiveService: WebSocket error');
+        if (this.turnTimer) { clearTimeout(this.turnTimer); this.turnTimer = null; }
         this.ready = false;
         const err = new Error('Gemini Live WebSocket error');
         this.setupReject?.(err);
@@ -154,13 +223,15 @@ class GeminiLiveService {
         this.turnReject?.(err);
         this.turnReject = null;
         this.turnResolve = null;
+        // Clean up the socket so next connect() starts fresh
+        this.ws = null;
       };
 
       ws.onclose = (event: CloseEvent) => {
-        console.log(`GeminiLiveService: closed (code=${event.code})`);
+        console.log(`GeminiLiveService: closed (code=${event.code} reason=${event.reason})`);
         this.ready = false;
         if (this.turnReject) {
-          this.turnReject(new Error('Gemini Live connection closed mid-turn'));
+          this.turnReject(new Error(`Gemini Live closed mid-turn (code=${event.code} reason=${event.reason || 'none'})`));
           this.turnReject  = null;
           this.turnResolve = null;
         }
@@ -169,49 +240,53 @@ class GeminiLiveService {
   }
 
   private handleMessage(msg: any): void {
-    // ── Setup handshake complete ────────────────────────────────────────────
+    const topKey = Object.keys(msg)[0] ?? 'unknown';
+    // sessionResumptionUpdate is a keepalive — skip logging, handle silently
+    if (topKey === 'sessionResumptionUpdate') return;
+    dbg(`handleMessage: topKey=${topKey}`);
+
     if (msg.setupComplete !== undefined) {
       this.ready = true;
-      console.log('GeminiLiveService: session ready');
+      dbg('handleMessage: setupComplete → session ready');
       this.setupResolve?.();
       this.setupResolve = null;
       this.setupReject  = null;
       return;
     }
 
-    // ── Model audio response ────────────────────────────────────────────────
     if (msg.serverContent?.modelTurn?.parts) {
       for (const part of msg.serverContent.modelTurn.parts) {
         if (part.inlineData?.data) {
-          this.responseChunks.push(this.base64ToBuffer(part.inlineData.data));
+          const buf = this.base64ToBuffer(part.inlineData.data);
+          this.responseChunks.push(buf);
+          dbg(`handleMessage: audio chunk ${buf.byteLength}B total chunks=${this.responseChunks.length}`);
         }
       }
     }
 
-    // ── Output transcription (AI's text response) ───────────────────────────
     if (msg.serverContent?.outputTranscription?.text) {
       const t = msg.serverContent.outputTranscription.text;
-      console.log(`GeminiLive AI: "${t}"`);
+      dbg(`handleMessage: transcript="${t}"`);
       this.responseTextParts.push(t);
     }
 
-    // ── Turn complete — assemble response and resolve ───────────────────────
     if (msg.serverContent?.turnComplete === true) {
-      if (this.turnTimer) {
-        clearTimeout(this.turnTimer);
-        this.turnTimer = null;
-      }
-      if (this.turnResolve) {
-        const assembled = this.assembleChunks(this.responseChunks);
-        const text = this.responseTextParts.join(' ').trim();
-        console.log(`GeminiLive: response complete — ${assembled.byteLength} bytes PCM @ 24 kHz${text ? ` | text: "${text}"` : ''}`);
-        this.responseChunks   = [];
-        this.responseTextParts = [];
-        const resolve    = this.turnResolve;
-        this.turnResolve = null;
-        this.turnReject  = null;
-        resolve({ pcm: assembled, text });
-      }
+      if (this.turnTimer) { clearTimeout(this.turnTimer); this.turnTimer = null; }
+      const assembled = this.assembleChunks(this.responseChunks);
+      const text = this.responseTextParts.join(' ').trim();
+      dbg(`handleMessage: turnComplete — ${assembled.byteLength}B PCM, text="${text}"`);
+      this.responseChunks    = [];
+      this.responseTextParts = [];
+      const resolve    = this.turnResolve;
+      this.turnResolve = null;
+      this.turnReject  = null;
+      // Resolve FIRST, then close — avoids any race with onclose firing before resolve
+      resolve?.({ pcm: assembled, text });
+      // Schedule disconnect on next tick so resolve handler runs first
+      setTimeout(() => {
+        this.disconnect();
+        dbg('session closed after turn — next call will reconnect');
+      }, 0);
     }
   }
 
@@ -224,10 +299,20 @@ class GeminiLiveService {
    */
   streamPcm(pcm: ArrayBuffer): void {
     if (!this.ws || !this.ready) {
-      console.warn('GeminiLiveService: streamPcm called but not connected');
+      dbg('streamPcm: NOT CONNECTED — skipping');
       return;
     }
+    // Calculate RMS to confirm real audio (not silence)
+    const samples = new Int16Array(pcm);
+    let sumSq = 0;
+    for (let i = 0; i < samples.length; i++) sumSq += samples[i] * samples[i];
+    const rms = Math.sqrt(sumSq / (samples.length || 1));
+
+    DEBUG_LOG.push('────────────────────');
+    dbg(`streamPcm: ${pcm.byteLength}B PCM, RMS=${rms.toFixed(0)} (speech>500)`);
+
     const bytes = new Uint8Array(pcm);
+    let chunkCount = 0;
     for (let i = 0; i < bytes.length; i += STREAM_CHUNK_BYTES) {
       const slice = bytes.subarray(i, i + STREAM_CHUNK_BYTES);
       this.ws.send(JSON.stringify({
@@ -238,7 +323,9 @@ class GeminiLiveService {
           },
         },
       }));
+      chunkCount++;
     }
+    dbg(`streamPcm: sent ${chunkCount} chunks`);
   }
 
   /**
@@ -247,7 +334,7 @@ class GeminiLiveService {
    *
    * @param timeoutMs  Max wait for first response (default 30 s)
    */
-  endUserTurn(timeoutMs = 30_000): Promise<{ pcm: ArrayBuffer; text: string }> {
+  endUserTurn(timeoutMs = 15_000): Promise<{ pcm: ArrayBuffer; text: string }> {
     if (!this.ws || !this.ready) {
       return Promise.reject(new Error('Gemini Live not connected'));
     }
@@ -263,14 +350,19 @@ class GeminiLiveService {
         this.turnResolve = null;
         this.turnReject  = null;
         this.responseChunks = [];
+        this.responseTextParts = [];
+        // Force-close the session so next attempt starts fresh — stale sessions never respond
+        dbg('endUserTurn: TIMEOUT — closing stale session');
+        this.disconnect();
         reject(new Error('Gemini Live response timeout after ' + timeoutMs + ' ms'));
       }, timeoutMs);
 
-      // Tell Gemini the audio stream has ended (realtimeInput mode)
+      // Signal end of audio stream — triggers model generation
+      dbg('endUserTurn: sending audioStreamEnd');
       this.ws!.send(JSON.stringify({
         realtimeInput: { audioStreamEnd: true },
       }));
-
+      dbg('endUserTurn: waiting for turnComplete...');
     });
   }
 
@@ -365,11 +457,10 @@ class GeminiLiveService {
   }
 
   private bufferToBase64(bytes: Uint8Array): string {
-    // Process in 8 KB chunks to avoid call-stack limits on large buffers
-    const CHUNK = 8192;
+    // Hermes (release builds) cannot spread large arrays — must loop manually
     let binary = '';
-    for (let i = 0; i < bytes.length; i += CHUNK) {
-      binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+    for (let i = 0; i < bytes.length; i++) {
+      binary += String.fromCharCode(bytes[i]);
     }
     return btoa(binary);
   }

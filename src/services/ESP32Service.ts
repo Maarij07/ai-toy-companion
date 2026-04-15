@@ -13,7 +13,9 @@ export type ESP32Message =
   | { type: 'NEW_FILE';    filename: string; size: number }  // NEW:name:size\n  (firmware notifies new recording)
   | { type: 'FILE_HEADER'; filename: string; size: number }  // FILE:name:size\n (response to SEND:name)
   | { type: 'FILE_END';    filename: string }                // END:name\n
-  | { type: 'LISTENING' }                                    // LISTENING\n
+  | { type: 'LISTENING' }                                    // LISTENING\n (all files sent, ready for Opus response)
+  | { type: 'READY_FOR_RESPONSE' }                           // READY_FOR_RESPONSE\n (v15: STREAM_MODE accepted, send Opus)
+  | { type: 'PLAYED';      filename: string }                // PLAYED:name\n (v15: Opus playback complete)
   | { type: 'SAVED';       filename: string }                // SAVED:name\n
   | { type: 'ERROR';       message: string }                 // ERROR:reason\n
   | { type: 'TEXT';        raw: string }                     // Any other text (STATUS reply)
@@ -98,7 +100,7 @@ class ESP32Service {
       prefix += String.fromCharCode(bytes[i]);
     }
 
-    const knownPrefixes = ['FILE:', 'NEW:', 'END:', 'SAVED:', 'ERROR:', 'LISTEN'];
+    const knownPrefixes = ['FILE:', 'NEW:', 'END:', 'SAVED:', 'ERROR:', 'LISTEN', 'PLAYED:', 'READY_FOR'];
     const isTextCommand = knownPrefixes.some(p => prefix.startsWith(p));
 
     if (!isTextCommand) {
@@ -149,6 +151,14 @@ class ESP32Service {
 
     if (text.startsWith('LISTENING')) {
       return { type: 'LISTENING' };
+    }
+
+    if (text.startsWith('READY_FOR_RESPONSE')) {
+      return { type: 'READY_FOR_RESPONSE' };
+    }
+
+    if (text.startsWith('PLAYED:')) {
+      return { type: 'PLAYED', filename: text.slice(7) };
     }
 
     if (text.startsWith('STREAM_START:')) {

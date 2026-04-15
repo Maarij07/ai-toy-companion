@@ -9,9 +9,11 @@ import {
   Modal,
   View,
   TouchableOpacity,
+  Text as RNText,
 } from 'react-native';
 import ESP32Service from '../services/ESP32Service';
 import VoiceProcessingService, { PipelineStatus } from '../services/VoiceProcessingService';
+import { geminiDebugLog, geminiDebugClear } from '../services/GeminiLiveService';
 import voiceConfig from '../config/voiceConfig';
 import ChatService, { ChatMessage } from '../services/ChatService';
 import { ToyService } from '../services/ToyService';
@@ -1193,6 +1195,19 @@ const HomeScreen = ({ onNavigateToHome, onNavigateToAddToy }: { onNavigateToHome
   const [detailProduct, setDetailProduct] = useState<any>(null);
   const [toyDetailVisible, setToyDetailVisible] = useState(false);
   const [selectedToy, setSelectedToy] = useState<any>(null);
+  const [debugVisible, setDebugVisible] = useState(false);
+  const [debugLines, setDebugLines] = useState<string[]>([]);
+  const debugTimer = useRef<any>(null);
+
+  // Poll debug log every second when overlay is open
+  useEffect(() => {
+    if (debugVisible) {
+      debugTimer.current = setInterval(() => setDebugLines([...geminiDebugLog()]), 1000);
+    } else {
+      clearInterval(debugTimer.current);
+    }
+    return () => clearInterval(debugTimer.current);
+  }, [debugVisible]);
   
   const renderTabContent = () => {
     if (detailProduct) {
@@ -1302,7 +1317,31 @@ const HomeScreen = ({ onNavigateToHome, onNavigateToAddToy }: { onNavigateToHome
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#FFFFFF' }}>
       {renderTabContent()}
-      
+
+      {/* ── DEBUG toggle button ── */}
+      <TouchableOpacity
+        onPress={() => { setDebugLines([...geminiDebugLog()]); setDebugVisible(v => !v); }}
+        style={{ position: 'absolute', top: 50, right: 8, backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: 6, paddingHorizontal: 7, paddingVertical: 3, zIndex: 200 }}
+      >
+        <RNText style={{ color: '#fff', fontSize: 11 }}>🔍 LOG</RNText>
+      </TouchableOpacity>
+
+      {/* ── DEBUG log overlay ── */}
+      {debugVisible && (
+        <View style={{ position: 'absolute', top: 75, left: 0, right: 0, bottom: 80, backgroundColor: 'rgba(0,0,0,0.88)', zIndex: 199, padding: 8 }}>
+          <TouchableOpacity onPress={() => { geminiDebugClear(); setDebugLines([]); }}
+            style={{ backgroundColor: '#c00', borderRadius: 4, padding: 4, marginBottom: 6, alignSelf: 'flex-start' }}>
+            <RNText style={{ color: '#fff', fontSize: 10 }}>CLEAR</RNText>
+          </TouchableOpacity>
+          <ScrollView>
+            {debugLines.length === 0
+              ? <RNText style={{ color: '#aaa', fontSize: 10 }}>No logs yet — tap CLEAR then trigger a voice interaction</RNText>
+              : debugLines.map((l, i) => <RNText key={i} style={{ color: '#0f0', fontSize: 9, fontFamily: 'monospace' }}>{l}</RNText>)
+            }
+          </ScrollView>
+        </View>
+      )}
+
       {/* Tab Bar - Only show when not viewing product detail */}
       {detailProduct || toyDetailVisible ? null : (
         <HStack justifyContent="space-around" alignItems="center" p="$3" bg="$backgroundLight0" borderTopWidth={0.5} borderTopColor="$borderLight300" position="absolute" bottom={0} left={0} right={0}>

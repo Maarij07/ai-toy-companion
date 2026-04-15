@@ -2,6 +2,9 @@
 # Reference: https://supabase.com/docs/guides/functions/config
 
 # Voice Processing Functions
+[functions.encode-opus]
+verify_jwt = false
+
 [functions.stt-processing]
 verify_jwt = true
 

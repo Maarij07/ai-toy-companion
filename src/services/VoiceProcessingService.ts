@@ -5,6 +5,7 @@ import LLMService from './LLMService';
 import TTSService from './TTSService';
 import ChatService from './ChatService';
 import GeminiLiveService from './GeminiLiveService';
+import { supabaseUrl, supabaseAnonKey } from '../config/supabase';
 
 // Config only covers AI services — BLE / NUS UUIDs are internal to ESP32Service
 interface VoiceProcessingConfig {
@@ -164,43 +165,84 @@ class VoiceProcessingService {
    * Step 1 — Connect (or reuse existing session)
    * Step 2 — Stream PCM to Gemini Live
    * Step 3 — End user turn, await audio response (24 kHz PCM)
-   * Step 4 — Downsample 24 kHz → 16 kHz + wrap in WAV header
-   * Step 5 — Send WAV to ESP32 over BLE
+   * Step 4 — Downsample 24 kHz → 16 kHz + encode to Opus (via edge fn)
+   * Step 5 — Send Opus to ESP32 over BLE
    */
+
+  /**
+   * Calls the encode-opus Supabase Edge Function to convert 16kHz 16-bit mono
+   * PCM into length-prefixed raw Opus packets for ESP32 v15 firmware.
+   * Format: [uint16_t len LE][opus bytes][uint16_t len LE][...]
+   */
+  private async encodePcmToOpus(pcm16: ArrayBuffer): Promise<ArrayBuffer> {
+    const bytes = new Uint8Array(pcm16);
+    let binary = '';
+    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+    const pcmB64 = btoa(binary);
+
+    const res = await fetch(`${supabaseUrl}/functions/v1/encode-opus`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': supabaseAnonKey,
+        'Authorization': `Bearer ${supabaseAnonKey}`,
+      },
+      body: JSON.stringify({ pcm: pcmB64 }),
+    });
+
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(`encode-opus edge fn failed (${res.status}): ${body}`);
+    }
+
+    const { opus } = await res.json() as { opus: string };
+    const opusBinary = atob(opus);
+    const opusBytes = new Uint8Array(opusBinary.length);
+    for (let i = 0; i < opusBinary.length; i++) opusBytes[i] = opusBinary.charCodeAt(i);
+    return opusBytes.buffer as ArrayBuffer;
+  }
+
   private async processWithGeminiLive(
     audioData: ArrayBuffer,
     toyPersonality: string,
     onStatus?: (status: PipelineStatus) => void
   ): Promise<{ success: boolean; error: string }> {
     try {
-      console.log(`GeminiLive pipeline start — audio: ${audioData.byteLength} bytes`);
+      console.log(`VPS|GeminiLive pipeline start — audio: ${audioData.byteLength} bytes`);
 
       if (audioData.byteLength < 200) {
+        console.warn(`VPS|REJECTED: too small (${audioData.byteLength} bytes)`);
         return { success: false, error: 'empty_recording' };
       }
 
-      // ── Step 1: Extract PCM from live-stream buffer ───────────────────────
-      // The firmware sends a 44-byte WAV header (with placeholder dataSize=0xFFFFFFFF)
-      // followed by raw 16-bit 16 kHz mono PCM. Skip the header directly — no
-      // WAV parsing needed since format is fixed by the ESP32 firmware config.
       const WAV_HEADER_BYTES = 44;
-      // Round down to even bytes — 509-byte BLE chunks (MTU 512−3) can produce odd totals
       const rawPcm = audioData.byteLength > WAV_HEADER_BYTES
         ? audioData.slice(WAV_HEADER_BYTES)
         : audioData;
       const evenLen = rawPcm.byteLength & ~1;
       const pcmData = evenLen < rawPcm.byteLength ? rawPcm.slice(0, evenLen) : rawPcm;
 
-      const pcmSamples = pcmData.byteLength / 2; // 16-bit = 2 bytes per sample
+      const pcmSamples = pcmData.byteLength / 2;
       const durationMs = Math.round((pcmSamples / 16000) * 1000);
-      console.log(`GeminiLive: PCM ${pcmData.byteLength} bytes = ${durationMs} ms @ 16kHz 16-bit mono`);
+      console.log(`VPS|PCM ${pcmData.byteLength} bytes = ${durationMs}ms`);
       this.logPCMEnergy(pcmData);
 
-      // Require at least 500 ms of audio — Gemini Live won't respond to shorter clips
       if (durationMs < 500) {
-        console.warn(`GeminiLive: audio too short (${durationMs} ms) — hold button for 2+ seconds`);
+        console.warn(`VPS|REJECTED: too short (${durationMs}ms) — need 500ms+`);
         onStatus?.('idle');
         return { success: false, error: 'empty_recording' };
+      }
+
+      // Check RMS energy — if too quiet Gemini will not respond (wastes 30s timeout)
+      const samples = new Int16Array(pcmData);
+      let sumSq = 0;
+      for (let i = 0; i < samples.length; i++) sumSq += samples[i] * samples[i];
+      const rms = Math.sqrt(sumSq / (samples.length || 1));
+      console.log(`VPS|RMS=${rms.toFixed(0)}`);
+      if (rms < 500) {
+        console.warn(`VPS|REJECTED: audio too quiet (RMS=${rms.toFixed(0)}) — speak closer to the mic`);
+        onStatus?.('idle');
+        return { success: false, error: 'audio_too_quiet' };
       }
 
       // ── Step 2: Connect to Gemini Live (reuses session if already open) ──
@@ -236,18 +278,19 @@ class VoiceProcessingService {
         }
       }
 
-      // ── Step 4: Downsample 24 kHz → 16 kHz + build WAV ──────────────────
+      // ── Step 4: Downsample 24 kHz → 16 kHz + encode to Opus ─────────────
       const responsePcm16 = GeminiLiveService.downsample24to16(responsePcm24);
-      const responseWav   = GeminiLiveService.buildWav16k(responsePcm16);
-      console.log(`GeminiLive: WAV ready — ${responseWav.byteLength} bytes @ 16kHz for ESP32`);
+      console.log(`VPS|downsampled to ${responsePcm16.byteLength}B @ 16kHz — encoding Opus...`);
+      const responseOpus = await this.encodePcmToOpus(responsePcm16);
+      console.log(`VPS|Opus ready — ${responseOpus.byteLength}B (${((responseOpus.byteLength/responsePcm16.byteLength)*100).toFixed(1)}% of WAV)`);
 
-      // ── Step 5: Send WAV back to ESP32 ───────────────────────────────────
+      // ── Step 5: Send Opus to ESP32 ────────────────────────────────────────
       onStatus?.('sending');
       if (ESP32Service.isConnected()) {
-        await ESP32Service.sendFileToESP32('response.wav', responseWav);
-        console.log(`GeminiLive: response.wav (${responseWav.byteLength} B) sent to ESP32`);
+        await ESP32Service.sendFileToESP32('response.opus', responseOpus);
+        console.log(`VPS|response.opus (${responseOpus.byteLength}B) sent to ESP32`);
       } else {
-        console.warn('GeminiLive: ESP32 not connected — skipping BLE send');
+        console.warn('VPS|ESP32 not connected — skipping BLE send');
       }
 
       onStatus?.('idle');
@@ -408,10 +451,10 @@ class VoiceProcessingService {
       return;
     }
 
-    // Register auto-receive handler BEFORE subscribing so no message is missed
     ESP32Service.setAutoReceiveHandler(async (filename, audioData) => {
-      console.log(`Received ${filename} (${audioData.byteLength} bytes) — running pipeline`);
+      console.log(`VPS|BLE audio received: ${filename} ${audioData.byteLength}B — useGeminiLive=${this.config?.useGeminiLive}`);
       const result = await this.processAudioFromToy(audioData, toyPersonality, onStatus);
+      console.log(`VPS|pipeline result: success=${result.success} error=${result.error}`);
       onProcessingComplete(result.success, result.error || undefined);
     });
 
