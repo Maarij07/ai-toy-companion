@@ -27,8 +27,10 @@
 //  2. App sends SENDALL → ESP32 streams all files → deletes them
 //  3. After ALL files sent → ESP32 sends LISTENING to app
 //  4. App sends length-prefixed raw Opus packets in TCP stream
-//  5. App sends DONE:filename.opus
-//  6. ESP32 decodes Opus from LittleFS → plays on MAX98357A speaker
+//     → decoded on receive into a ring buffer; playback starts at ~60ms
+//  5. App sends a zero-length packet (end-of-stream sentinel)
+//     (legacy DONE:filename.opus still accepted from older apps)
+//  6. ESP32 finishes draining the ring buffer through the speaker
 //  7. ESP32 sends PLAYED:filename.opus back to app
 //
 //  KEY CHANGE vs BLE version:
@@ -221,6 +223,12 @@ static TaskHandle_t      streamPlayTaskHandle = nullptr;
 
 // Start playback after 3 Opus frames buffered (3×320 = 960 stereo pairs ≈ 60ms)
 #define STREAM_PLAY_THRESHOLD  960
+
+// Lullaby is deferred: it only starts if no response audio has arrived
+// LULLABY_DEFER_MS after entering STREAMING mode. On fast turns the
+// speaker goes straight to the response — no I2S handoff needed at all.
+#define LULLABY_DEFER_MS  1500
+static volatile uint32_t streamEnterMs = 0;
 
 // ── Opus packet reassembly state ──────────────────────────────
 // Incoming TCP chunks carry [uint16_t len LE][opus_bytes] stream.
@@ -693,13 +701,28 @@ void writeChunkToLittleFS(const uint8_t* data, size_t len) {
 void streamPlayTask(void* param) {
   Serial.println("[PLAY] streamPlayTask started — waiting for lullaby");
 
-  // Wait for babyTuneTask to release I2S_NUM_1
-  uint32_t waitStart = millis();
-  while (babyTunePlaying && (millis() - waitStart) < 500)
-    vTaskDelay(pdMS_TO_TICKS(5));
+  // Synchronous I2S handoff: NEVER touch I2S_NUM_1 while the lullaby task
+  // owns it. The old code waited 500ms then force-cleared babyTunePlaying
+  // while the task could still be inside i2s_write() — two tasks driving
+  // the same I2S peripheral was the crash from the June report.
+  // babyTuneTask checks babyTuneStop every audio chunk (≤50ms), so a real
+  // exit is fast; the 2s cap only triggers if the task is wedged, in which
+  // case we abort playback cleanly instead of corrupting the peripheral.
   if (babyTunePlaying) {
-    babyTunePlaying    = false;
-    babyTuneTaskHandle = nullptr;
+    babyTuneStop = true;
+    uint32_t waitStart = millis();
+    while (babyTunePlaying && (millis() - waitStart) < 2000)
+      vTaskDelay(pdMS_TO_TICKS(5));
+    if (babyTunePlaying) {
+      Serial.println("[PLAY] FATAL: lullaby did not release I2S — aborting playback");
+      char abortMsg[CMD_MAX_LEN];
+      snprintf(abortMsg, CMD_MAX_LEN, "__PLAYED:response.opus");
+      xQueueSend(cmdQueue, abortMsg, pdMS_TO_TICKS(100));
+      streamPlayTaskHandle = nullptr;
+      streamPlayStarted    = false;
+      vTaskDelete(NULL);
+      return;
+    }
   }
   vTaskDelay(pdMS_TO_TICKS(30));  // let DMA drain
 
@@ -863,17 +886,27 @@ void enterStreamPlayback() {
   rxState      = RxState::STREAMING;
   ledYellow();
 
-  // Allocate PSRAM ring buffer once — reused across turns
+  // Allocate ring buffer once — reused across turns.
+  // Internal SRAM first: the ring is only 32KB and keeping it off PSRAM
+  // removes the WiFi-DMA vs I2S-DMA contention on the PSRAM bus that
+  // caused audio gaps under load. PSRAM is the logged fallback.
   if (!streamRingBuf) {
+    const size_t ringBytes = STREAM_RING_STEREO * 2 * sizeof(int16_t);
     streamRingBuf = (int16_t*)heap_caps_malloc(
-      STREAM_RING_STEREO * 2 * sizeof(int16_t), MALLOC_CAP_SPIRAM);
-    if (!streamRingBuf) {
-      Serial.println("[RING] FATAL: Cannot allocate PSRAM ring buffer");
-      tcpSendRaw("ERROR:Ring buffer alloc failed\n");
-      return;
+      ringBytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    if (streamRingBuf) {
+      Serial.printf("[RING] Internal SRAM ring buffer: %uKB\n", ringBytes / 1024);
+    } else {
+      Serial.println("[RING] WARNING: internal SRAM alloc failed — falling back to PSRAM "
+                     "(bus contention possible under load)");
+      streamRingBuf = (int16_t*)heap_caps_malloc(ringBytes, MALLOC_CAP_SPIRAM);
+      if (!streamRingBuf) {
+        Serial.println("[RING] FATAL: Cannot allocate ring buffer");
+        tcpSendRaw("ERROR:Ring buffer alloc failed\n");
+        return;
+      }
+      Serial.printf("[RING] PSRAM ring buffer: %uKB\n", ringBytes / 1024);
     }
-    Serial.printf("[RING] PSRAM ring buffer: %uKB\n",
-                  (STREAM_RING_STEREO * 2 * sizeof(int16_t)) / 1024);
   }
 
   // Reset ring state for this turn
@@ -899,12 +932,15 @@ void enterStreamPlayback() {
   }
 
   Serial.println("[RING] Ready — decode-on-receive streaming");
-  startBabyTune();
+  // Lullaby no longer starts here — wifiTask starts it only if the first
+  // response chunk hasn't arrived within LULLABY_DEFER_MS (see wifiTask).
+  streamEnterMs = millis();
 }
 
 void exitStreamPlayback(const String& fname) {
   // Signal ring buffer complete — streamPlayTask drains and sends PLAYED
   streamRingDone = true;
+  streamEnterMs  = 0;   // cancel any pending deferred-lullaby start
   Serial.printf("[RING] DONE — %u chunks, %u stereo frames buffered\n",
                 rxChunkCount, streamRingWritePos - streamRingReadPos);
 
@@ -961,6 +997,17 @@ void exitListenMode() {
 // ============================================================
 void handleTcpIncoming() {
   while (tcpClient.available()) {
+    // ── Backpressure: pause reads while the ring is nearly full ─────
+    // Leave room for one worst-case decode (960 stereo pairs) plus a
+    // safety margin. Unread bytes stay in the TCP socket buffer and
+    // TCP flow control stalls the phone until the play task frees
+    // space — no data is dropped, no overflow possible.
+    if (rxState == RxState::STREAMING && streamRingBuf) {
+      uint32_t ringFree = STREAM_RING_STEREO - 1 -
+                          (streamRingWritePos - streamRingReadPos);
+      if (ringFree < 2048) return;
+    }
+
     int avail = tcpClient.available();
     if (avail <= 0) break;
 
@@ -1279,6 +1326,13 @@ void wifiTask(void* param) {
     // ── 4. Process command queue (Opus DONE, PLAY, text cmds) ─
     if (xQueueReceive(cmdQueue, buf, 0) == pdTRUE) {
       handleTCPCommand(buf);
+    }
+
+    // ── 4b. Deferred lullaby — only if Gemini is slow ─────────
+    if (rxState == RxState::STREAMING && rxChunkCount == 0 &&
+        !babyTunePlaying && streamEnterMs != 0 &&
+        (millis() - streamEnterMs) > LULLABY_DEFER_MS) {
+      startBabyTune();
     }
 
     // ── 5. WiFi reconnect watchdog ────────────────────────────
