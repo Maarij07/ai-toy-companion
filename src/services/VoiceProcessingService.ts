@@ -8,6 +8,7 @@ import GeminiLiveService from './GeminiLiveService';
 import Esp32DiscoveryService from './Esp32DiscoveryService';
 import { supabaseUrl, supabaseAnonKey } from '../config/supabase';
 import { ESP32_FALLBACK_IPS, ESP32_NSD_SERVICE_TYPES } from '../config/voiceConfig';
+import LatencyTrace from '../utils/LatencyTrace';
 
 interface VoiceProcessingConfig {
   whisperModelPath?: string;
@@ -265,6 +266,8 @@ class VoiceProcessingService {
     onStatus?: (status: PipelineStatus) => void
   ): Promise<{ success: boolean; error: string }> {
     try {
+      // Batch path: the turn effectively starts when the full recording lands here
+      if (!LatencyTrace.isActive()) LatencyTrace.start();
       console.log(`VPS|GeminiLive pipeline start — audio: ${audioData.byteLength} bytes`);
 
       // ── Guard: empty / corrupt recording ─────────────────────────────────
@@ -396,6 +399,7 @@ class VoiceProcessingService {
 
       // DONE: 150ms gap then signal — firmware exits STREAMING mode and plays
       await ESP32WiFiService.sendStreamDone('response.opus');
+      LatencyTrace.mark('done_sent');
       console.log(`VPS|DONE sent — ${totalOpusBytes}B total opus, pipeline complete`);
 
       onStatus?.('idle');
@@ -568,6 +572,7 @@ class VoiceProcessingService {
       if (msg.type === 'SAVED')    { console.log(`ESP32 saved: ${msg.filename}`); }
       if (msg.type === 'ERROR')    { console.error(`ESP32 error: ${msg.message}`); }
       if (msg.type === 'LISTENING'){ console.log('ESP32 ready to receive'); }
+      if (msg.type === 'PLAYED')   { LatencyTrace.finish('played_received'); }
     });
 
     console.log('VoiceProcessingService: continuously listening for ESP32 recordings');

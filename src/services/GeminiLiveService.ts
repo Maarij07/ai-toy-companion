@@ -18,6 +18,7 @@
  * Note: relay/ is built and parked for production/school pilot phase.
  */
 import { supabaseUrl, supabaseAnonKey } from '../config/supabase';
+import LatencyTrace from '../utils/LatencyTrace';
 
 const GEMINI_LIVE_WS_BASE =
   'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent';
@@ -35,7 +36,7 @@ const _origLog = console.log.bind(console);
 console.log = (...args: any[]) => {
   _origLog(...args);
   const msg = args.map(a => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ');
-  if (msg.startsWith('VPS|') || msg.startsWith('GeminiLive|')) {
+  if (msg.startsWith('VPS|') || msg.startsWith('GeminiLive|') || msg.startsWith('LAT|')) {
     const line = `[${new Date().toISOString().slice(11,23)}] ${msg}`;
     DEBUG_LOG.push(line);
     if (DEBUG_LOG.length > 60) DEBUG_LOG.shift();
@@ -270,6 +271,7 @@ class GeminiLiveService {
     if (msg.serverContent?.modelTurn?.parts) {
       for (const part of msg.serverContent.modelTurn.parts) {
         if (part.inlineData?.data) {
+          LatencyTrace.mark('gemini_first_audio');
           const buf = this.base64ToBuffer(part.inlineData.data);
           if (this.turnChunkCallback) {
             // Streaming mode: deliver each chunk immediately as Gemini generates it
@@ -291,6 +293,7 @@ class GeminiLiveService {
     }
 
     if (msg.serverContent?.turnComplete === true) {
+      LatencyTrace.mark('gemini_turn_complete');
       if (this.turnTimer) { clearTimeout(this.turnTimer); this.turnTimer = null; }
       const text = this.responseTextParts.join(' ').trim();
       // In streaming mode pcm is empty (delivered via onChunk); in batch mode assemble now
@@ -387,6 +390,7 @@ class GeminiLiveService {
       this.ws!.send(JSON.stringify({
         realtimeInput: { audioStreamEnd: true },
       }));
+      LatencyTrace.mark('activity_end_sent');
       dbg('endUserTurn: waiting for turnComplete...');
     });
   }
