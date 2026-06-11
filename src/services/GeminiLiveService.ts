@@ -69,6 +69,8 @@ class GeminiLiveService {
   private turnResolve: ((result: { pcm: ArrayBuffer; text: string }) => void) | null = null;
   private turnReject:  ((err: Error) => void) | null = null;
   private turnTimer:   ReturnType<typeof setTimeout> | null = null;
+  // Streaming callback — when set, audio chunks are delivered immediately instead of buffered
+  private turnChunkCallback: ((pcm24: ArrayBuffer) => void) | null = null;
 
   // setupResolve / setupReject live only during the initial handshake
   private setupResolve: (() => void) | null = null;
@@ -102,6 +104,9 @@ class GeminiLiveService {
       throw new Error(`gemini-key edge fn failed (${res.status}): ${body}`);
     }
     const { key } = await res.json() as { key: string };
+    if (!key || typeof key !== 'string') {
+      throw new Error('gemini-key edge fn returned an invalid or missing key');
+    }
     this.cachedApiKey = key;
     console.log('GeminiLiveService: API key ready');
     return key;
@@ -157,7 +162,7 @@ class GeminiLiveService {
         dbg('connect: WS open — sending setup msg');
         const setupMsg: any = {
           setup: {
-            model: 'models/gemini-3.1-flash-live-preview',
+            model: 'models/gemini-2.0-flash-live-001',
             generationConfig: {
               responseModalities: ['AUDIO'],
             },
@@ -230,6 +235,14 @@ class GeminiLiveService {
       ws.onclose = (event: CloseEvent) => {
         console.log(`GeminiLiveService: closed (code=${event.code} reason=${event.reason})`);
         this.ready = false;
+        // If closed before setupComplete arrived, reject connect() immediately
+        // instead of hanging until the 15-second timeout.
+        if (this.setupReject) {
+          const err = new Error(`Gemini Live WS closed during setup (code=${event.code})`);
+          this.setupReject(err);
+          this.setupReject  = null;
+          this.setupResolve = null;
+        }
         if (this.turnReject) {
           this.turnReject(new Error(`Gemini Live closed mid-turn (code=${event.code} reason=${event.reason || 'none'})`));
           this.turnReject  = null;
@@ -258,8 +271,15 @@ class GeminiLiveService {
       for (const part of msg.serverContent.modelTurn.parts) {
         if (part.inlineData?.data) {
           const buf = this.base64ToBuffer(part.inlineData.data);
-          this.responseChunks.push(buf);
-          dbg(`handleMessage: audio chunk ${buf.byteLength}B total chunks=${this.responseChunks.length}`);
+          if (this.turnChunkCallback) {
+            // Streaming mode: deliver each chunk immediately as Gemini generates it
+            this.turnChunkCallback(buf);
+            dbg(`handleMessage: audio chunk ${buf.byteLength}B → streaming callback`);
+          } else {
+            // Batch mode (backward compat): accumulate until turnComplete
+            this.responseChunks.push(buf);
+            dbg(`handleMessage: audio chunk ${buf.byteLength}B total chunks=${this.responseChunks.length}`);
+          }
         }
       }
     }
@@ -272,21 +292,20 @@ class GeminiLiveService {
 
     if (msg.serverContent?.turnComplete === true) {
       if (this.turnTimer) { clearTimeout(this.turnTimer); this.turnTimer = null; }
-      const assembled = this.assembleChunks(this.responseChunks);
       const text = this.responseTextParts.join(' ').trim();
-      dbg(`handleMessage: turnComplete — ${assembled.byteLength}B PCM, text="${text}"`);
-      this.responseChunks    = [];
-      this.responseTextParts = [];
+      // In streaming mode pcm is empty (delivered via onChunk); in batch mode assemble now
+      const assembled = this.turnChunkCallback
+        ? new ArrayBuffer(0)
+        : this.assembleChunks(this.responseChunks);
+      dbg(`handleMessage: turnComplete — ${assembled.byteLength}B PCM, text="${text}" streaming=${!!this.turnChunkCallback}`);
+      this.responseChunks      = [];
+      this.responseTextParts   = [];
+      this.turnChunkCallback   = null;
       const resolve    = this.turnResolve;
       this.turnResolve = null;
       this.turnReject  = null;
-      // Resolve FIRST, then close — avoids any race with onclose firing before resolve
+      // Session stays OPEN — reused on the next turn (saves ~500ms reconnect cost)
       resolve?.({ pcm: assembled, text });
-      // Schedule disconnect on next tick so resolve handler runs first
-      setTimeout(() => {
-        this.disconnect();
-        dbg('session closed after turn — next call will reconnect');
-      }, 0);
     }
   }
 
@@ -330,26 +349,32 @@ class GeminiLiveService {
 
   /**
    * Signal end of the user's audio turn. Returns a Promise that resolves
-   * with the raw 24 kHz PCM response when Gemini finishes generating.
+   * when Gemini finishes generating.
    *
-   * @param timeoutMs  Max wait for first response (default 30 s)
+   * @param timeoutMs  Max wait for response (default 30 s)
+   * @param onChunk    Optional streaming callback — fired for each audio chunk as it
+   *                   arrives. When provided, the resolved `pcm` field is empty
+   *                   (ArrayBuffer(0)) since audio was delivered incrementally.
+   *                   Without it, all audio is accumulated and returned in `pcm`.
    */
-  endUserTurn(timeoutMs = 15_000): Promise<{ pcm: ArrayBuffer; text: string }> {
+  endUserTurn(timeoutMs = 15_000, onChunk?: (pcm24: ArrayBuffer) => void): Promise<{ pcm: ArrayBuffer; text: string }> {
     if (!this.ws || !this.ready) {
       return Promise.reject(new Error('Gemini Live not connected'));
     }
 
-    this.responseChunks    = [];
-    this.responseTextParts = [];
+    this.responseChunks      = [];
+    this.responseTextParts   = [];
+    this.turnChunkCallback   = onChunk ?? null;
 
     return new Promise<{ pcm: ArrayBuffer; text: string }>((resolve, reject) => {
       this.turnResolve = resolve;
       this.turnReject  = reject;
 
       this.turnTimer = setTimeout(() => {
-        this.turnResolve = null;
-        this.turnReject  = null;
-        this.responseChunks = [];
+        this.turnResolve       = null;
+        this.turnReject        = null;
+        this.turnChunkCallback = null;
+        this.responseChunks    = [];
         this.responseTextParts = [];
         // Force-close the session so next attempt starts fresh — stale sessions never respond
         dbg('endUserTurn: TIMEOUT — closing stale session');
@@ -431,11 +456,12 @@ class GeminiLiveService {
 
   disconnect(): void {
     if (this.turnTimer)  { clearTimeout(this.turnTimer); this.turnTimer = null; }
-    this.turnResolve  = null;
-    this.turnReject   = null;
-    this.setupResolve = null;
-    this.setupReject  = null;
-    this.responseChunks = [];
+    this.turnResolve       = null;
+    this.turnReject        = null;
+    this.turnChunkCallback = null;
+    this.setupResolve      = null;
+    this.setupReject       = null;
+    this.responseChunks    = [];
     this.ready = false;
     if (this.ws) {
       try { this.ws.close(); } catch {}

@@ -9,9 +9,11 @@ import {
   Modal,
   View,
   TouchableOpacity,
+  TextInput,
   Text as RNText,
 } from 'react-native';
-import ESP32Service from '../services/ESP32Service';
+import ESP32WiFiService from '../services/ESP32WiFiService';
+import { ESP32_FALLBACK_IPS, ESP32_IP, ESP32_PORT } from '../config/voiceConfig';
 import VoiceProcessingService, { PipelineStatus } from '../services/VoiceProcessingService';
 import { geminiDebugLog, geminiDebugClear } from '../services/GeminiLiveService';
 import voiceConfig from '../config/voiceConfig';
@@ -80,13 +82,15 @@ const NewHomeContent = ({
   const [toys, setToys] = useState<any[]>([]);
   const [isLoadingToys, setIsLoadingToys] = useState(true);
 
-  // BLE pipeline state
+  // WiFi pipeline state (replaces BLE)
   type BLEStatus = 'idle' | 'connecting' | 'listening' | 'processing' | 'error';
   const [bleStatus, setBleStatus] = useState<BLEStatus>('idle');
   const [bleStatusLabel, setBleStatusLabel] = useState('');
+  const [esp32Ip, setEsp32Ip] = useState(ESP32_IP);
   const [recentMessages, setRecentMessages] = useState<ChatMessage[]>([]);
   const [connectedToyId, setConnectedToyId] = useState<string | null>(null);
   const bleStartedRef = useRef(false);
+  const pipelineStartingRef = useRef(false);
   const lastToyRef = useRef<any>(null);
 
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -108,133 +112,160 @@ const NewHomeContent = ({
     }
   };
 
-  // ── Start the BLE → STT → LLM → DB → TTS → BLE pipeline ───────────────
+  // ── Start the WiFi → STT → LLM → DB → TTS → WiFi pipeline ─────────────
   const handleReconnect = async () => {
     const toy = lastToyRef.current;
     if (!toy) return;
     setBleStatus('connecting');
     setBleStatusLabel('Reconnecting...');
-    const connected = await VoiceProcessingService.reconnectToESP32();
-    if (!connected) {
-      setBleStatus('error');
-      setBleStatusLabel('Could not reconnect');
-      setTimeout(() => { setBleStatus('idle'); setBleStatusLabel(''); }, 4000);
-      return;
-    }
-    setConnectedToyId(toy.id);
-    setBleStatus('listening');
-    setBleStatusLabel('Listening...');
-    // Re-subscribe and restart pipeline with same toy
-    await VoiceProcessingService.startListeningToToy(
-      (_success, error) => {
-        if (error && error !== 'empty_recording') {
-          setBleStatus('error');
-          setBleStatusLabel(error);
-          setTimeout(() => { setBleStatus('listening'); setBleStatusLabel('Listening...'); }, 4000);
-        } else {
-          setBleStatus('listening');
-          setBleStatusLabel('Listening...');
-        }
-        if (!error || error !== 'empty_recording') loadRecentMessages(toy.id);
-      },
-      toy.custom_personality ||
-        `You are ${toy.name}, a friendly AI toy companion for children. Respond warmly, keep answers short and fun.`,
-      (status: PipelineStatus) => {
-        const statusMap: Record<PipelineStatus, string> = {
-          transcribing: 'Understanding speech...',
-          thinking:     'Thinking of a response...',
-          saving:       'Saving conversation...',
-          sending:      'Sending response to toy...',
-          idle:         'Listening...',
-        };
-        setBleStatus(status === 'idle' ? 'listening' : 'processing');
-        setBleStatusLabel(statusMap[status]);
+    try {
+      const connected = await VoiceProcessingService.reconnectToESP32(esp32Ip);
+      if (!connected) {
+        setBleStatus('error');
+        setBleStatusLabel('Could not reconnect');
+        setTimeout(() => { setBleStatus('idle'); setBleStatusLabel(''); }, 4000);
+        return;
       }
-    );
+      setConnectedToyId(toy.id);
+      setBleStatus('listening');
+      setBleStatusLabel('Listening...');
+      await VoiceProcessingService.startListeningToToy(
+        (_success, error) => {
+          if (error && error !== 'empty_recording') {
+            setBleStatus('error');
+            setBleStatusLabel(error);
+            setTimeout(() => { setBleStatus('listening'); setBleStatusLabel('Listening...'); }, 4000);
+          } else {
+            setBleStatus('listening');
+            setBleStatusLabel('Listening...');
+          }
+          if (!error || error !== 'empty_recording') loadRecentMessages(toy.id);
+        },
+        toy.custom_personality ||
+          `You are ${toy.name}, a friendly AI toy companion for children. Respond warmly. Keep every answer under 20 words.`,
+        (status: PipelineStatus) => {
+          const statusMap: Record<PipelineStatus, string> = {
+            transcribing: 'Understanding speech...',
+            thinking:     'Thinking of a response...',
+            saving:       'Saving conversation...',
+            sending:      'Sending response to toy...',
+            idle:         'Listening...',
+          };
+          setBleStatus(status === 'idle' ? 'listening' : 'processing');
+          setBleStatusLabel(statusMap[status]);
+        }
+      );
+    } catch (err) {
+      console.error('handleReconnect unexpected error:', err);
+      setBleStatus('error');
+      setBleStatusLabel('Reconnect failed unexpectedly');
+      setTimeout(() => { setBleStatus('idle'); setBleStatusLabel(''); }, 4000);
+    }
   };
 
   const startBLEPipeline = async (toy: any) => {
+    if (
+      pipelineStartingRef.current ||
+      (ESP32WiFiService.isConnected() && connectedToyId === toy.id)
+    ) {
+      console.log('HomeScreen: WiFi pipeline already active, skipping duplicate connect');
+      return;
+    }
+
+    pipelineStartingRef.current = true;
     lastToyRef.current = toy;
     setBleStatus('connecting');
     setBleStatusLabel('Connecting to toy...');
 
-    // If already connected to a different toy, disconnect first
-    if (ESP32Service.isConnected() && connectedToyId && connectedToyId !== toy.id) {
-      await VoiceProcessingService.disconnectFromESP32();
-      setConnectedToyId(null);
-    }
-
-    // Initialise AI services and bind the toyId for chat logging
-    await VoiceProcessingService.initialize({
-      toyId: toy.id,
-      geminiApiKey: voiceConfig.geminiApiKey,
-      useGeminiLive: voiceConfig.useGeminiLive,
-    });
-
-    // Physically connect via BLE if not already connected
-    if (!ESP32Service.isConnected()) {
-      const connected = await VoiceProcessingService.connectToESP32();
-      if (!connected) {
-        setBleStatus('error');
-        setBleStatusLabel('Could not connect to toy via Bluetooth');
-        bleStartedRef.current = false;
-        return;
+    try {
+      // If already connected to a different toy, disconnect first
+      if (ESP32WiFiService.isConnected() && connectedToyId && connectedToyId !== toy.id) {
+        await VoiceProcessingService.disconnectFromESP32();
+        setConnectedToyId(null);
       }
-    }
 
-    setConnectedToyId(toy.id);
-    setBleStatus('listening');
-    setBleStatusLabel('Listening...');
-    loadRecentMessages(toy.id);
+      // Initialise AI services and bind the toyId for chat logging
+      await VoiceProcessingService.initialize({
+        toyId: toy.id,
+        geminiApiKey: voiceConfig.geminiApiKey,
+        useGeminiLive: voiceConfig.useGeminiLive,
+        esp32Ip:   esp32Ip,
+        esp32Port: ESP32_PORT,
+        esp32FallbackIps: ESP32_FALLBACK_IPS,
+      });
 
-    // Reset pipeline state when BLE connection drops (device off or manual disconnect)
-    // lastToyRef is intentionally kept so the Reconnect button can appear
-    ESP32Service.setDisconnectHandler(() => {
-      setBleStatus('idle');
-      setBleStatusLabel('');
-      setConnectedToyId(null);
-      bleStartedRef.current = false;
-    });
-
-    // Register the auto-receive handler — fires for every recording pushed by ESP32
-    await VoiceProcessingService.startListeningToToy(
-      (_success, error) => {
-        if (error && error !== 'empty_recording') {
-          console.error('Pipeline error:', error);
-          // Show error briefly, then return to listening
+      // Connect via WiFi TCP if not already connected
+      if (!ESP32WiFiService.isConnected()) {
+        const connected = await VoiceProcessingService.connectToESP32(esp32Ip);
+        if (!connected) {
           setBleStatus('error');
-          setBleStatusLabel(error);
-          setTimeout(() => {
+          setBleStatusLabel('Could not connect to toy');
+          bleStartedRef.current = false;
+          pipelineStartingRef.current = false;
+          return;
+        }
+      }
+
+      setConnectedToyId(toy.id);
+      setBleStatus('listening');
+      setBleStatusLabel('Listening...');
+      loadRecentMessages(toy.id);
+
+      // Reset pipeline state when WiFi connection drops
+      ESP32WiFiService.setDisconnectHandler(() => {
+        setBleStatus('idle');
+        setBleStatusLabel('');
+        setConnectedToyId(null);
+        bleStartedRef.current = false;
+        pipelineStartingRef.current = false;
+      });
+
+      // Register the auto-receive handler — fires for every recording pushed by ESP32
+      await VoiceProcessingService.startListeningToToy(
+        (_success, error) => {
+          if (error && error !== 'empty_recording') {
+            console.error('Pipeline error:', error);
+            setBleStatus('error');
+            setBleStatusLabel(error);
+            setTimeout(() => {
+              setBleStatus('listening');
+              setBleStatusLabel('Listening...');
+            }, 4000);
+          } else {
             setBleStatus('listening');
             setBleStatusLabel('Listening...');
-          }, 4000);
-        } else {
-          setBleStatus('listening');
-          setBleStatusLabel('Listening...');
+          }
+          if (!error || error !== 'empty_recording') {
+            loadRecentMessages(toy.id);
+          }
+        },
+        toy.custom_personality ||
+          `You are ${toy.name}, a friendly AI toy companion for children. Respond warmly. Keep every answer under 20 words.`,
+        (status: PipelineStatus) => {
+          const statusMap: Record<PipelineStatus, string> = {
+            transcribing: 'Understanding speech...',
+            thinking:     'Thinking of a response...',
+            saving:       'Saving conversation...',
+            sending:      'Sending response to toy...',
+            idle:         'Listening...',
+          };
+          if (status === 'idle') {
+            setBleStatus('listening');
+          } else {
+            setBleStatus('processing');
+          }
+          setBleStatusLabel(statusMap[status]);
         }
-        if (!error || error !== 'empty_recording') {
-          loadRecentMessages(toy.id);
-        }
-      },
-      toy.custom_personality ||
-        `You are ${toy.name}, a friendly AI toy companion for children. Respond warmly, keep answers short and fun.`,
-      (status: PipelineStatus) => {
-        // Show real-time progress while a recording is being processed
-        const statusMap: Record<PipelineStatus, string> = {
-          transcribing: 'Understanding speech...',
-          thinking:     'Thinking of a response...',
-          saving:       'Saving conversation...',
-          sending:      'Sending response to toy...',
-          idle:         'Listening...',
-        };
-        if (status === 'idle') {
-          setBleStatus('listening');
-        } else {
-          setBleStatus('processing');
-        }
-        setBleStatusLabel(statusMap[status]);
-      }
-    );
+      );
+    } catch (err) {
+      console.error('startBLEPipeline unexpected error:', err);
+      setBleStatus('error');
+      setBleStatusLabel('Connection failed unexpectedly');
+      bleStartedRef.current = false;
+      setTimeout(() => { setBleStatus('idle'); setBleStatusLabel(''); }, 4000);
+    } finally {
+      pipelineStartingRef.current = false;
+    }
   };
 
   const loadToys = async () => {
@@ -245,7 +276,7 @@ const NewHomeContent = ({
       const { data: toysData } = await ToyService.getUserToys(sessionData.session.user.id);
       if (toysData) {
         setToys(toysData);
-        // Auto-start BLE pipeline for the first connected toy (once per mount)
+        // Auto-start WiFi pipeline for the first connected toy (once per mount)
         const connectedToy = (toysData as any[]).find(t => t.connected);
         if (connectedToy && !bleStartedRef.current) {
           bleStartedRef.current = true;
@@ -456,16 +487,41 @@ const NewHomeContent = ({
             </Card>
           </VStack>
 
+          {/* ESP32 host input — shown while disconnected so user can edit it */}
+          {(bleStatus === 'idle' || bleStatus === 'error') && (
+            <VStack mb="$4">
+              <Text size="xs" color="$textDark500" mb="$1">
+                ESP32 host or IP address
+              </Text>
+              <TextInput
+                value={esp32Ip}
+                onChangeText={setEsp32Ip}
+                placeholder="esp32audio.local"
+                keyboardType="default"
+                style={{
+                  borderWidth: 1,
+                  borderColor: '#CBD5E1',
+                  borderRadius: 8,
+                  paddingHorizontal: 12,
+                  paddingVertical: 8,
+                  fontSize: 14,
+                  color: '#0F172A',
+                  backgroundColor: '#F8FAFC',
+                }}
+              />
+            </VStack>
+          )}
+
           {/* Recent Activity */}
           <VStack>
             <HStack justifyContent="space-between" alignItems="center" mb="$3">
               <Heading size="sm" color="$textDark800">Recent Activity</Heading>
-              {bleStatus === 'error' && (
-                <Text size="xs" color="$error600">{bleStatusLabel}</Text>
-              )}
             </HStack>
+            {bleStatus === 'error' && (
+              <Text size="xs" color="$error600" mb="$2">{bleStatusLabel}</Text>
+            )}
 
-            {/* BLE status banner */}
+            {/* WiFi status banner */}
             {connectedToyId && bleStatus !== 'idle' && bleStatus !== 'error' && (
               <HStack
                 bg="$backgroundLight0"

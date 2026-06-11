@@ -1,7 +1,5 @@
 import { supabase } from '../config/supabase';
 
-console.log('AuthService module loaded, supabase client:', supabase);
-
 // Validate that supabase client is properly initialized
 if (!supabase) {
   console.error('Supabase client is not properly initialized. Please check your environment variables.');

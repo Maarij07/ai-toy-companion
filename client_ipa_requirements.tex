@@ -1,0 +1,67 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{enumitem}
+\usepackage{hyperref}
+
+\title{Requirements for Creating an iOS IPA Build}
+\author{AI Toy Companion Mobile App}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\section*{Purpose}
+
+This document summarizes what is required to create an iOS IPA file for the AI Toy Companion mobile application. The current development environment does not include macOS/Xcode access, so the client will need to provide the Apple build environment and Apple developer credentials.
+
+\section*{Required Client Resources}
+
+\begin{itemize}[leftmargin=*]
+  \item A Mac computer or Mac build machine with a recent supported version of macOS.
+  \item Xcode installed from the Mac App Store or Apple Developer portal.
+  \item Apple Developer Program membership for the client organization.
+  \item Access to App Store Connect, if the build will be uploaded for TestFlight or App Store review.
+  \item iOS bundle identifier, for example: \texttt{com.client.aitoycompanion}.
+  \item Signing certificate and provisioning profile, or permission for Xcode to manage signing automatically.
+  \item Target iPhone/iPad test devices registered in the Apple Developer account if creating an ad hoc build.
+\end{itemize}
+
+\section*{Project Build Requirements}
+
+\begin{itemize}[leftmargin=*]
+  \item Node.js and npm installed on the Mac.
+  \item Ruby/Bundler and CocoaPods available for installing iOS native dependencies.
+  \item Project dependencies installed using \texttt{npm install}.
+  \item iOS pods installed using:
+  \begin{verbatim}
+cd ios
+bundle install
+bundle exec pod install
+  \end{verbatim}
+  \item Required app configuration values, API endpoints, and environment values provided before archiving.
+\end{itemize}
+
+\section*{IPA Creation Process}
+
+\begin{enumerate}[leftmargin=*]
+  \item Open the iOS workspace in Xcode: \texttt{ios/*.xcworkspace}.
+  \item Select the correct app target and development team.
+  \item Confirm bundle identifier, version number, build number, permissions, and signing settings.
+  \item Build and test the app on a real iPhone.
+  \item Create an archive using Xcode: \texttt{Product > Archive}.
+  \item Export the archive as an IPA for the required distribution type:
+  \begin{itemize}
+    \item Development build
+    \item Ad hoc build
+    \item TestFlight/App Store build
+    \item Enterprise build, if the client has enterprise distribution
+  \end{itemize}
+\end{enumerate}
+
+\section*{Notes}
+
+The IPA cannot be generated from a Windows-only environment because Apple requires Xcode and Apple code signing tools for iOS builds. Once the client provides Mac/Xcode access and signing credentials, the development team can prepare, archive, and export the IPA.
+
+\end{document}

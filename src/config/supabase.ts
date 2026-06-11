@@ -1,15 +1,9 @@
 import { createClient } from '@supabase/supabase-js';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-console.log('Supabase config loading...');
-console.log('EXPO_PUBLIC_SUPABASE_URL:', process.env.EXPO_PUBLIC_SUPABASE_URL);
-console.log('EXPO_PUBLIC_SUPABASE_ANON_KEY:', process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY);
-
 // Hardcoded Supabase credentials
 export const supabaseUrl = 'https://etsnyensdpagqfbuxdpe.supabase.co';
 export const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImV0c255ZW5zZHBhZ3FmYnV4ZHBlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzAzOTM0MTQsImV4cCI6MjA4NTk2OTQxNH0.Z_iK2v6BVqB4tRHNWnIV3kaYjxM4y5UFQis68ad3btw';
-
-console.log('Using hardcoded Supabase URL:', supabaseUrl);
 
 // Create Supabase client
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {

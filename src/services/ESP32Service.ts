@@ -6,7 +6,7 @@ export const NUS_SERVICE_UUID  = '6E400001-B5A3-F393-E0A9-E50E24DCCA9E';
 export const NUS_RX_UUID       = '6E400002-B5A3-F393-E0A9-E50E24DCCA9E'; // App  → ESP32
 export const NUS_TX_UUID       = '6E400003-B5A3-F393-E0A9-E50E24DCCA9E'; // ESP32 → App
 
-const CHUNK_SIZE = 500; // bytes per write (binary data to ESP32)
+const CHUNK_SIZE = 510; // bytes per write (binary data to ESP32)
 
 // ─── Message types parsed from the TX characteristic ────────────────────────
 export type ESP32Message =
@@ -567,7 +567,7 @@ class ESP32Service {
       // Brief pause between chunks so the ESP32 BLE RX buffer doesn't overflow.
       // 10 ms is enough for 500-byte chunks at typical BLE 2 Mbps PHY.
       if (i < totalChunks - 1) {
-        await new Promise(resolve => setTimeout(resolve, 10));
+        await new Promise(resolve => setTimeout(resolve, 20));
       }
     }
 

@@ -1,19 +1,24 @@
-import ESP32Service from './ESP32Service';
+import ESP32WiFiService from './ESP32WiFiService';
 import WhisperService from './WhisperService';
 import GoogleSTTService from './GoogleSTTService';
 import LLMService from './LLMService';
 import TTSService from './TTSService';
 import ChatService from './ChatService';
 import GeminiLiveService from './GeminiLiveService';
+import Esp32DiscoveryService from './Esp32DiscoveryService';
 import { supabaseUrl, supabaseAnonKey } from '../config/supabase';
+import { ESP32_FALLBACK_IPS, ESP32_NSD_SERVICE_TYPES } from '../config/voiceConfig';
 
-// Config only covers AI services — BLE / NUS UUIDs are internal to ESP32Service
 interface VoiceProcessingConfig {
   whisperModelPath?: string;
   ttsLanguage?: string;
   toyId?: string;        // Current toy ID for chat logging
   geminiApiKey?: string; // Set to enable Gemini Live prototype
   useGeminiLive?: boolean;
+  esp32Ip?: string;      // ESP32 IP address (printed to Serial on boot)
+  esp32Port?: number;    // TCP port — default 8765
+  esp32NsdServiceTypes?: string[];
+  esp32FallbackIps?: string[];
 }
 
 // Status emitted during pipeline execution so UI can update in real time
@@ -22,6 +27,7 @@ export type PipelineStatus = 'transcribing' | 'thinking' | 'saving' | 'sending' 
 class VoiceProcessingService {
   private config: VoiceProcessingConfig | null = null;
   private isInitialized: boolean = false;
+  private readonly maxOpusResponseSeconds = 12;
 
   // ── WAV parser ─────────────────────────────────────────────────────────────
 
@@ -107,6 +113,50 @@ class VoiceProcessingService {
     console.log(`PCM energy — RMS: ${rms.toFixed(1)}, peak: ${peak} (speech needs RMS > 500)`);
   }
 
+  private bufferToBase64(buffer: ArrayBuffer): string {
+    const bytes = new Uint8Array(buffer);
+    const chunkSize = 0x8000;
+    let binary = '';
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+      const chunk = bytes.subarray(i, i + chunkSize);
+      let chunkBinary = '';
+      for (let j = 0; j < chunk.length; j++) {
+        chunkBinary += String.fromCharCode(chunk[j]);
+      }
+      binary += chunkBinary;
+    }
+    return btoa(binary);
+  }
+
+  private base64ToBuffer(b64: string): ArrayBuffer {
+    const binary = atob(b64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return bytes.buffer as ArrayBuffer;
+  }
+
+  private async fetchWithTimeout(
+    url: string,
+    options: RequestInit,
+    timeoutMs: number,
+    label: string
+  ): Promise<Response> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      return await fetch(url, { ...options, signal: controller.signal });
+    } catch (error) {
+      if ((error as Error).name === 'AbortError') {
+        throw new Error(`${label} timed out after ${timeoutMs} ms`);
+      }
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   // ── Initialise AI services ─────────────────────────────────────────────────
 
   async initialize(config: VoiceProcessingConfig): Promise<boolean> {
@@ -166,7 +216,7 @@ class VoiceProcessingService {
    * Step 2 — Stream PCM to Gemini Live
    * Step 3 — End user turn, await audio response (24 kHz PCM)
    * Step 4 — Downsample 24 kHz → 16 kHz + encode to Opus (via edge fn)
-   * Step 5 — Send Opus to ESP32 over BLE
+   * Step 5 — Send Opus to ESP32 over WiFi
    */
 
   /**
@@ -175,12 +225,20 @@ class VoiceProcessingService {
    * Format: [uint16_t len LE][opus bytes][uint16_t len LE][...]
    */
   private async encodePcmToOpus(pcm16: ArrayBuffer): Promise<ArrayBuffer> {
-    const bytes = new Uint8Array(pcm16);
-    let binary = '';
-    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-    const pcmB64 = btoa(binary);
+    const maxBytes = this.maxOpusResponseSeconds * 16000 * 2;
+    const pcmForEncode = pcm16.byteLength > maxBytes ? pcm16.slice(0, maxBytes) : pcm16;
+    if (pcmForEncode.byteLength !== pcm16.byteLength) {
+      console.warn(
+        `VPS|Opus input trimmed from ${pcm16.byteLength}B to ${pcmForEncode.byteLength}B ` +
+        `(${this.maxOpusResponseSeconds}s cap)`
+      );
+    }
 
-    const res = await fetch(`${supabaseUrl}/functions/v1/encode-opus`, {
+    const startedAt = Date.now();
+    const pcmB64 = this.bufferToBase64(pcmForEncode);
+    console.log(`VPS|encode-opus request: pcm=${pcmForEncode.byteLength}B b64=${pcmB64.length} chars`);
+
+    const res = await this.fetchWithTimeout(`${supabaseUrl}/functions/v1/encode-opus`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -188,7 +246,7 @@ class VoiceProcessingService {
         'Authorization': `Bearer ${supabaseAnonKey}`,
       },
       body: JSON.stringify({ pcm: pcmB64 }),
-    });
+    }, 45_000, 'encode-opus edge function');
 
     if (!res.ok) {
       const body = await res.text();
@@ -196,10 +254,9 @@ class VoiceProcessingService {
     }
 
     const { opus } = await res.json() as { opus: string };
-    const opusBinary = atob(opus);
-    const opusBytes = new Uint8Array(opusBinary.length);
-    for (let i = 0; i < opusBinary.length; i++) opusBytes[i] = opusBinary.charCodeAt(i);
-    return opusBytes.buffer as ArrayBuffer;
+    const opusBuffer = this.base64ToBuffer(opus);
+    console.log(`VPS|encode-opus response: opus=${opusBuffer.byteLength}B elapsed=${Date.now() - startedAt}ms`);
+    return opusBuffer;
   }
 
   private async processWithGeminiLive(
@@ -210,6 +267,7 @@ class VoiceProcessingService {
     try {
       console.log(`VPS|GeminiLive pipeline start — audio: ${audioData.byteLength} bytes`);
 
+      // ── Guard: empty / corrupt recording ─────────────────────────────────
       if (audioData.byteLength < 200) {
         console.warn(`VPS|REJECTED: too small (${audioData.byteLength} bytes)`);
         return { success: false, error: 'empty_recording' };
@@ -222,87 +280,134 @@ class VoiceProcessingService {
       const evenLen = rawPcm.byteLength & ~1;
       const pcmData = evenLen < rawPcm.byteLength ? rawPcm.slice(0, evenLen) : rawPcm;
 
-      const pcmSamples = pcmData.byteLength / 2;
-      const durationMs = Math.round((pcmSamples / 16000) * 1000);
+      const durationMs = Math.round((pcmData.byteLength / 2 / 16000) * 1000);
       console.log(`VPS|PCM ${pcmData.byteLength} bytes = ${durationMs}ms`);
       this.logPCMEnergy(pcmData);
 
       if (durationMs < 500) {
-        console.warn(`VPS|REJECTED: too short (${durationMs}ms) — need 500ms+`);
+        console.warn(`VPS|REJECTED: too short (${durationMs}ms)`);
         onStatus?.('idle');
         return { success: false, error: 'empty_recording' };
       }
 
-      // Check RMS energy — if too quiet Gemini will not respond (wastes 30s timeout)
       const samples = new Int16Array(pcmData);
       let sumSq = 0;
       for (let i = 0; i < samples.length; i++) sumSq += samples[i] * samples[i];
       const rms = Math.sqrt(sumSq / (samples.length || 1));
       console.log(`VPS|RMS=${rms.toFixed(0)}`);
       if (rms < 500) {
-        console.warn(`VPS|REJECTED: audio too quiet (RMS=${rms.toFixed(0)}) — speak closer to the mic`);
+        console.warn(`VPS|REJECTED: audio too quiet (RMS=${rms.toFixed(0)})`);
         onStatus?.('idle');
         return { success: false, error: 'audio_too_quiet' };
       }
 
-      // ── Step 2: Connect to Gemini Live (reuses session if already open) ──
+      // ── Connect (reuses warm session — no reconnect cost after first turn) ─
       onStatus?.('thinking');
-      console.log('GeminiLive: connecting to WebSocket...');
       const personality =
         toyPersonality ||
-        'You are a friendly AI toy companion for children. Respond warmly, in a child-friendly way. Keep answers short and fun.';
-
+        'You are a friendly AI toy companion for children. Respond warmly, in a child-friendly way. Keep every answer under 20 words.';
       await GeminiLiveService.connect(personality);
-      console.log('GeminiLive: session connected — streaming PCM...');
+      console.log('VPS|Gemini session ready — streaming PCM');
 
-      // ── Step 3: Stream PCM + signal end of turn ──────────────────────────
-      GeminiLiveService.streamPcm(pcmData);
-      console.log('GeminiLive: PCM streamed — waiting for AI response (up to 30s)...');
-      const { pcm: responsePcm24, text: responseText } = await GeminiLiveService.endUserTurn(30_000);
+      // ── Streaming encode pipeline ─────────────────────────────────────────
+      // As Gemini generates audio chunks we:
+      //   1. Downsample 24→16 kHz immediately
+      //   2. Accumulate until 1s of PCM (32 KB) — Opus frame-aligned
+      //   3. Fire encode-opus HTTP call for that chunk (non-blocking — runs in background)
+      //   4. Collect all encode Promises; await + send them in order after turnComplete
+      //
+      // This means encoding of chunk N overlaps with Gemini generating chunk N+1,
+      // so the ESP32 starts receiving Opus within ~1s of Gemini's first audio.
 
-      if (!responsePcm24 || responsePcm24.byteLength === 0) {
-        onStatus?.('idle');
-        return { success: false, error: 'Gemini Live returned empty audio' };
-      }
-      console.log(`GeminiLive: got response — ${responsePcm24.byteLength} bytes @ 24kHz`);
+      // 1 second of 16kHz 16-bit mono PCM, aligned to Opus frame boundary (320 samples = 640 bytes)
+      const OPUS_FRAME_BYTES    = 640;
+      const STREAM_CHUNK_BYTES  = Math.floor(32768 / OPUS_FRAME_BYTES) * OPUS_FRAME_BYTES; // 32640 B
 
-      // ── Step 3.5: Save chat to DB if we have a toyId and text ────────────
-      onStatus?.('saving');
-      if (this.config?.toyId && responseText) {
-        const userSave = await ChatService.saveMessage(this.config.toyId, 'user', '[Voice message]');
-        const aiSave   = await ChatService.saveMessage(this.config.toyId, 'assistant', responseText);
-        if (!userSave.success || !aiSave.success) {
-          console.warn('GeminiLive: chat save failed:', userSave.error || aiSave.error);
-        } else {
-          console.log(`GeminiLive: chat saved for toy ${this.config.toyId}`);
+      let pendingPcm16  = new Uint8Array(0);
+      const encodeQueue: Array<Promise<ArrayBuffer>> = [];
+
+      const flushPending = (force = false) => {
+        const threshold = force ? OPUS_FRAME_BYTES : STREAM_CHUNK_BYTES;
+        while (pendingPcm16.byteLength >= threshold) {
+          const take = force
+            ? Math.floor(pendingPcm16.byteLength / OPUS_FRAME_BYTES) * OPUS_FRAME_BYTES
+            : STREAM_CHUNK_BYTES;
+          const chunk = pendingPcm16.slice(0, take);
+          pendingPcm16 = pendingPcm16.slice(take);
+          // Start HTTP encode call immediately — runs concurrently with next chunk collection
+          encodeQueue.push(this.encodePcmToOpus(chunk.buffer as ArrayBuffer));
+          console.log(`VPS|encode chunk ${encodeQueue.length} queued (${chunk.byteLength}B PCM)`);
+          if (force) break;
         }
+      };
+
+      const onChunk = (pcm24: ArrayBuffer) => {
+        const pcm16 = GeminiLiveService.downsample24to16(pcm24);
+        const merged = new Uint8Array(pendingPcm16.byteLength + pcm16.byteLength);
+        merged.set(pendingPcm16);
+        merged.set(new Uint8Array(pcm16), pendingPcm16.byteLength);
+        pendingPcm16 = merged;
+        flushPending(false);
+      };
+
+      // ── Stream PCM to Gemini + wait for full turn (chunks delivered via onChunk) ─
+      GeminiLiveService.streamPcm(pcmData);
+      const { text: responseText } = await GeminiLiveService.endUserTurn(30_000, onChunk);
+      console.log(`VPS|turnComplete — text="${responseText}" encodeQueue=${encodeQueue.length}`);
+
+      // Encode any remaining PCM that didn't fill a full chunk
+      flushPending(true);
+
+      if (encodeQueue.length === 0) {
+        console.warn('VPS|No audio returned from Gemini');
+        onStatus?.('idle');
+        return { success: false, error: 'Gemini Live returned no audio' };
       }
 
-      // ── Step 4: Downsample 24 kHz → 16 kHz + encode to Opus ─────────────
-      const responsePcm16 = GeminiLiveService.downsample24to16(responsePcm24);
-      console.log(`VPS|downsampled to ${responsePcm16.byteLength}B @ 16kHz — encoding Opus...`);
-      const responseOpus = await this.encodePcmToOpus(responsePcm16);
-      console.log(`VPS|Opus ready — ${responseOpus.byteLength}B (${((responseOpus.byteLength/responsePcm16.byteLength)*100).toFixed(1)}% of WAV)`);
+      if (!ESP32WiFiService.isConnected()) {
+        onStatus?.('idle');
+        return { success: false, error: 'ESP32 disconnected before response send' };
+      }
 
-      // ── Step 5: Send Opus to ESP32 ────────────────────────────────────────
+      // ── Save chat (fire-and-forget — don't block audio delivery) ─────────
+      if (this.config?.toyId && responseText) {
+        Promise.all([
+          ChatService.saveMessage(this.config.toyId, 'user', '[Voice message]'),
+          ChatService.saveMessage(this.config.toyId, 'assistant', responseText),
+        ]).catch(e => console.warn('VPS|chat save failed:', e));
+      }
+
+      // ── Send encoded chunks to ESP32 in order as they finish ─────────────
+      // Encode calls are already running in parallel — most will be done by now.
       onStatus?.('sending');
-      if (ESP32Service.isConnected()) {
-        await ESP32Service.sendFileToESP32('response.opus', responseOpus);
-        console.log(`VPS|response.opus (${responseOpus.byteLength}B) sent to ESP32`);
-      } else {
-        console.warn('VPS|ESP32 not connected — skipping BLE send');
+      let totalOpusBytes = 0;
+      for (let i = 0; i < encodeQueue.length; i++) {
+        const opusChunk = await encodeQueue[i];
+        totalOpusBytes += opusChunk.byteLength;
+        if (!ESP32WiFiService.isConnected()) {
+          onStatus?.('idle');
+          return { success: false, error: 'ESP32 disconnected during send' };
+        }
+        ESP32WiFiService.sendOpusChunk(new Uint8Array(opusChunk));
+        console.log(`VPS|chunk ${i + 1}/${encodeQueue.length} sent (${opusChunk.byteLength}B opus)`);
+        // Tiny yield between chunks so the JS thread stays responsive
+        if (i < encodeQueue.length - 1) await new Promise(r => setTimeout(r, 5));
       }
+
+      // DONE: 150ms gap then signal — firmware exits STREAMING mode and plays
+      await ESP32WiFiService.sendStreamDone('response.opus');
+      console.log(`VPS|DONE sent — ${totalOpusBytes}B total opus, pipeline complete`);
 
       onStatus?.('idle');
       return { success: true, error: '' };
     } catch (error) {
-      console.error('GeminiLive pipeline error:', error);
+      console.error('VPS|GeminiLive pipeline error:', error);
       onStatus?.('idle');
       return { success: false, error: (error as Error).message };
     }
   }
 
-  // ── Full pipeline: audio bytes → STT → LLM → chat save → TTS → BLE ────────
+  // ── Full pipeline: audio bytes → STT → LLM → chat save → TTS → WiFi ───────
 
   /**
    * Routes to Gemini Live or the standard STT → LLM → TTS pipeline depending
@@ -313,7 +418,7 @@ class VoiceProcessingService {
    * Step 2 — LLM : Gemini via Supabase edge function
    * Step 3 — CHAT: Save user + AI messages to DB (always — before TTS/BLE)
    * Step 4 — TTS : Resemble AI → WAV ArrayBuffer  (best-effort)
-   * Step 5 — BLE : Send WAV to ESP32 in 500-byte chunks (best-effort)
+   * Step 5 — WiFi : Send WAV to ESP32 in chunks (best-effort)
    */
   async processAudioFromToy(
     audioData: ArrayBuffer,
@@ -330,7 +435,7 @@ class VoiceProcessingService {
         return this.processWithGeminiLive(
           audioData,
           toyPersonality ||
-            'You are a friendly AI toy companion for children. Respond warmly and keep answers short.',
+            'You are a friendly AI toy companion for children. Respond warmly. Keep every answer under 20 words.',
           onStatus
         );
       }
@@ -379,7 +484,7 @@ class VoiceProcessingService {
       const llmResult = await LLMService.getResponse(sttResult.text, {
         toyPersonality:
           toyPersonality ||
-          'You are a friendly AI toy companion. Respond warmly and in a child-friendly way. Keep replies short.',
+          'You are a friendly AI toy companion. Respond warmly and in a child-friendly way. Keep every reply under 20 words.',
         conversationId: `toy-${Date.now()}`,
       });
 
@@ -404,20 +509,20 @@ class VoiceProcessingService {
         console.warn('VoiceProcessingService: no toyId — chat messages not saved');
       }
 
-      // ── Step 4 & 5: TTS + BLE — best-effort, BLE failure won't lose chat ─
+      // ── Step 4 & 5: TTS + WiFi — best-effort, WiFi failure won't lose chat ─
       onStatus?.('sending');
-      if (TTSService.isReady() && ESP32Service.isConnected()) {
+      if (TTSService.isReady() && ESP32WiFiService.isConnected()) {
         const ttsResult = await TTSService.speak(llmResult.response);
         if (ttsResult.success && ttsResult.audioData) {
-          await ESP32Service.sendFileToESP32('response.wav', ttsResult.audioData);
+          await ESP32WiFiService.sendFileToESP32('response.wav', ttsResult.audioData);
           console.log(`response.wav (${ttsResult.audioData.byteLength} B) sent to ESP32`);
         } else {
-          console.warn('TTS failed, skipping BLE send:', ttsResult.error);
+          console.warn('TTS failed, skipping WiFi send:', ttsResult.error);
         }
       } else {
         console.warn(
-          'TTS/BLE skipped — TTS ready:', TTSService.isReady(),
-          'BLE connected:', ESP32Service.isConnected()
+          'TTS/WiFi skipped — TTS ready:', TTSService.isReady(),
+          'WiFi connected:', ESP32WiFiService.isConnected()
         );
       }
 
@@ -446,20 +551,20 @@ class VoiceProcessingService {
     toyPersonality?: string,
     onStatus?: (status: PipelineStatus) => void
   ): Promise<void> {
-    if (!ESP32Service.isConnected()) {
+    if (!ESP32WiFiService.isConnected()) {
       console.error('VoiceProcessingService: ESP32 not connected');
       return;
     }
 
-    ESP32Service.setAutoReceiveHandler(async (filename, audioData) => {
-      console.log(`VPS|BLE audio received: ${filename} ${audioData.byteLength}B — useGeminiLive=${this.config?.useGeminiLive}`);
+    ESP32WiFiService.setAutoReceiveHandler(async (filename, audioData) => {
+      console.log(`VPS|WiFi audio received: ${filename} ${audioData.byteLength}B — useGeminiLive=${this.config?.useGeminiLive}`);
       const result = await this.processAudioFromToy(audioData, toyPersonality, onStatus);
       console.log(`VPS|pipeline result: success=${result.success} error=${result.error}`);
       onProcessingComplete(result.success, result.error || undefined);
     });
 
     // Subscribe to TX — drives the internal state machine + logs signals
-    await ESP32Service.subscribeToMessages((msg) => {
+    await ESP32WiFiService.subscribeToMessages((msg) => {
       if (msg.type === 'SAVED')    { console.log(`ESP32 saved: ${msg.filename}`); }
       if (msg.type === 'ERROR')    { console.error(`ESP32 error: ${msg.message}`); }
       if (msg.type === 'LISTENING'){ console.log('ESP32 ready to receive'); }
@@ -468,25 +573,63 @@ class VoiceProcessingService {
     console.log('VoiceProcessingService: continuously listening for ESP32 recordings');
   }
 
-  // ── BLE connection helpers ────────────────────────────────────────────────
+  // ── WiFi connection helpers ───────────────────────────────────────────────
 
-  async connectToESP32(): Promise<boolean> {
-    return ESP32Service.connect();
+  private getEsp32HostCandidates(host?: string, discoveredHost?: string): string[] {
+    const primary = host || this.config?.esp32Ip || '';
+    const fallbackHosts = this.config?.esp32FallbackIps || ESP32_FALLBACK_IPS;
+
+    return [primary, discoveredHost || '', ...fallbackHosts]
+      .map(candidate => candidate.trim())
+      .filter((candidate, index, candidates) => Boolean(candidate) && candidates.indexOf(candidate) === index);
   }
 
-  async reconnectToESP32(): Promise<boolean> {
-    return ESP32Service.reconnect();
+  async connectToESP32(ip?: string): Promise<boolean> {
+    if (ESP32WiFiService.isConnected()) {
+      console.log('VoiceProcessingService: ESP32 already connected, reusing TCP connection');
+      return true;
+    }
+
+    const requestedHost = ip?.trim();
+    const shouldDiscover = !requestedHost || requestedHost.endsWith('.local');
+    const discovered = shouldDiscover
+      ? await Esp32DiscoveryService.discoverHost(
+          this.config?.esp32NsdServiceTypes || ESP32_NSD_SERVICE_TYPES
+        )
+      : null;
+    const hosts = this.getEsp32HostCandidates(ip, discovered?.host);
+    if (hosts.length === 0) {
+      console.error('VoiceProcessingService: no ESP32 IP — set esp32Ip in voiceConfig or pass to connectToESP32()');
+      return false;
+    }
+
+    const configuredPort = this.config?.esp32Port ?? 8765;
+    for (const host of hosts) {
+      const port = discovered?.host === host && discovered.port ? discovered.port : configuredPort;
+      console.log(`VoiceProcessingService: connecting to ESP32 at ${host}:${port}`);
+      const connected = await ESP32WiFiService.connect(host, port);
+      if (connected) {
+        return true;
+      }
+      console.warn(`VoiceProcessingService: failed to connect to ${host}:${port}`);
+    }
+
+    return false;
+  }
+
+  async reconnectToESP32(ip?: string): Promise<boolean> {
+    return this.connectToESP32(ip);
   }
 
   async disconnectFromESP32(): Promise<void> {
-    GeminiLiveService.disconnect(); // close Gemini Live session when toy disconnects
-    await ESP32Service.disconnect();
+    GeminiLiveService.disconnect();
+    await ESP32WiFiService.disconnect();
   }
 
   // ── Status ────────────────────────────────────────────────────────────────
 
   isReady(): boolean {
-    if (!this.isInitialized || !ESP32Service.isConnected()) return false;
+    if (!this.isInitialized || !ESP32WiFiService.isConnected()) return false;
     if (this.config?.useGeminiLive) return GeminiLiveService.isReady();
     return (
       (WhisperService.isReady() || GoogleSTTService.isReady()) &&

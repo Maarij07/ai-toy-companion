@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(\\(Get-Item \"d:\\\\temp\\\\development\\\\react-native-cli\\\\AI_Toy_WIFI\\\\android\\\\app\\\\build\\\\outputs\\\\apk\\\\release\\\\app-release.apk\"\\).Length / 1MB)",
+      "Bash(gradlew.bat assembleRelease)",
+      "PowerShell(Start-Process \"d:\\\\temp\\\\development\\\\react-native-cli\\\\AI_Toy_WIFI\\\\client_update_report.html\")",
+      "PowerShell(python --version)",
+      "PowerShell(Start-Process \"d:\\\\temp\\\\development\\\\react-native-cli\\\\AI_Toy_WIFI\\\\AI_Toy_Client_Report_June2026.pdf\")",
+      "Bash(python generate_report.py)",
+      "Bash(python -c ' *)"
+    ]
+  }
+}

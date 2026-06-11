@@ -1,0 +1,571 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{booktabs}
+\usepackage{listings}
+\usepackage{titlesec}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue,
+  urlcolor=blue
+}
+
+\definecolor{codebg}{RGB}{248,248,248}
+\definecolor{codeframe}{RGB}{210,210,210}
+
+\lstdefinestyle{logstyle}{
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  frame=single,
+  framerule=0.3pt,
+  rulecolor=\color{codeframe},
+  backgroundcolor=\color{codebg},
+  columns=fullflexible,
+  keepspaces=true,
+  showstringspaces=false
+}
+
+\titleformat{\section}{\large\bfseries}{\thesection}{0.75em}{}
+\titleformat{\subsection}{\normalsize\bfseries}{\thesubsection}{0.75em}{}
+
+\title{
+  AI Toy WiFi/TCP Voice Pipeline\\
+  Investigation, Fix Log, and Release Notes
+}
+\author{Mobile App Team and Firmware Team}
+\date{June 2, 2026}
+
+\begin{document}
+\maketitle
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+Project & AI\_Toy\_Companion, React Native CLI Android app \\
+Baseline commit & eddbe75, ``Opus mode working 7-8 secs'', dated 2026-04-15 \\
+Main device & ESP32 audio toy firmware using WiFi TCP server \\
+TCP endpoint & Port 8765 \\
+Discovery mechanisms & UDP broadcast, mDNS/NSD, fallback IP \\
+Final APK & android/app/build/outputs/apk/release/app-release.apk \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{Executive Summary}
+
+The team migrated and stabilized the toy voice pipeline from a manually entered TCP/IP workflow toward a more reliable WiFi/TCP integration between the React Native mobile app and the ESP32 firmware. The original symptom was that phones could connect to the same WiFi network, and a third-party TCP client app could communicate with the toy, but the mobile app pipeline was not reliably connecting, discovering, or completing the round trip.
+
+The firmware developer provided logs and firmware code showing that the ESP32 was reachable through raw TCP on port 8765, advertised itself through mDNS, and also broadcast its IP through UDP. The mobile-side work added Android NSD/mDNS support, UDP discovery, fallback IP handling, a TCP parser compatible with the firmware's mixed text/binary stream, duplicate-connection prevention, clearer failure reporting, and a React Native runtime fix for binary writes.
+
+By the end of this cycle, the app could build a release APK successfully, and the automated Jest suite passed. The latest app-side fixes specifically addressed repeated TCP connections and a runtime crash where React Native release builds did not expose the Node.js global \texttt{Buffer}.
+
+\section{Original Problem}
+
+\subsection{Observed User/Device Behavior}
+
+The user reported that mobile devices could join the WiFi network, and manual TCP client testing could connect to the ESP32, but the actual mobile application could not reliably connect and complete the voice pipeline.
+
+Manual TCP client screenshots showed successful connection using both:
+
+\begin{itemize}[leftmargin=*]
+  \item Direct IP: \texttt{192.168.1.44}
+  \item mDNS hostname: \texttt{esp32audio.local}
+  \item TCP port: \texttt{8765}
+\end{itemize}
+
+This proved that the ESP32 TCP server was reachable on the local network. Therefore, the issue was narrowed from ``ESP32 unavailable'' to ``app-side discovery, connection management, protocol handling, or Android networking behavior.''
+
+\subsection{Initial Firmware Logs}
+
+Representative firmware logs showed repeated app connections and status commands:
+
+\begin{lstlisting}[style=logstyle]
+[TCP] Client connected: 192.168.1.36
+[TCP] Sent CONNECTED
+[TCP] Queued cmd: STATUS
+[CMD] 'STATUS'
+[TCP] Old client replaced
+[TCP] Client connected: 192.168.1.36
+[TCP] Sent CONNECTED
+[TCP] Queued cmd: STATUS
+[CMD] 'STATUS'
+\end{lstlisting}
+
+The key line was:
+
+\begin{lstlisting}[style=logstyle]
+[TCP] Old client replaced
+\end{lstlisting}
+
+That line means the ESP32 accepted a new TCP client while the previous client was still connected, and the firmware intentionally dropped the old client. This is a dangerous condition for the live voice pipeline because the ESP32 state machine can reset back to command mode or lose the receive context for the AI response.
+
+\section{Firmware-Side Work and Protocol Understanding}
+
+\subsection{Firmware Discovery Support}
+
+The firmware developer recommended using mDNS or Android NSD. The firmware code showed the ESP32 advertised itself through mDNS:
+
+\begin{lstlisting}[style=logstyle]
+MDNS.begin("esp32audio")
+MDNS.addService("tcp", "tcp", TCP_PORT)
+\end{lstlisting}
+
+On Android NSD, this service maps to the DNS-SD type:
+
+\begin{lstlisting}[style=logstyle]
+_tcp._tcp.
+\end{lstlisting}
+
+The firmware also sends a UDP broadcast every few seconds on port 8766, with a payload in this format:
+
+\begin{lstlisting}[style=logstyle]
+ESP32AUDIO:<ip>:<port>
+\end{lstlisting}
+
+Example:
+
+\begin{lstlisting}[style=logstyle]
+ESP32AUDIO:192.168.1.44:8765
+\end{lstlisting}
+
+This gave the mobile app three possible ways to find the toy:
+
+\begin{enumerate}[leftmargin=*]
+  \item UDP broadcast discovery, fastest when Android permits it.
+  \item Android NSD/mDNS lookup.
+  \item Static fallback IP for development and field testing.
+\end{enumerate}
+
+\subsection{Firmware Voice Protocol}
+
+The firmware live voice flow is:
+
+\begin{enumerate}[leftmargin=*]
+  \item App connects to ESP32 TCP server.
+  \item ESP32 sends \texttt{CONNECTED}.
+  \item ESP32 records audio when the button is held.
+  \item ESP32 streams a live WAV-like stream to the app:
+    \texttt{STREAM\_START}, binary WAV/PCM bytes, then \texttt{STREAM\_END}.
+  \item ESP32 enters streaming receive mode and opens \texttt{/tts\_rx.opus}.
+  \item ESP32 sends \texttt{READY\_FOR\_RESPONSE}.
+  \item App sends raw Opus bytes back over the same TCP socket.
+  \item App sends \texttt{DONE:response.opus}.
+  \item ESP32 closes the receive file, decodes Opus, and plays the response.
+\end{enumerate}
+
+Representative firmware log:
+
+\begin{lstlisting}[style=logstyle]
+[REC] /rec_0002.wav -- hold button
+[STREAM] Live streaming to app over TCP
+[MIC] First chunk: 512 samples RMS=61051
+[STREAM] Done -- 49152B streamed
+[RX] TTS receive file open: /tts_rx.opus
+[TUNE] Baby tune task started
+[TUNE] Lullaby started
+[RX] STREAMING -- waiting for Opus response
+[DONE] /rec_0002.wav 49196B 1.5s Flash:12.8%
+[TUNE] Baby tune task exited
+[TCP] Client disconnected
+\end{lstlisting}
+
+This showed the firmware was reaching the correct receive state. The failure was happening before the Opus response arrived.
+
+\section{Mobile App Investigation}
+
+\subsection{Initial App Architecture}
+
+The React Native app had an existing voice-processing service abstraction. The work replaced the BLE-oriented send/receive path with a WiFi TCP path while keeping the same high-level pipeline:
+
+\begin{enumerate}[leftmargin=*]
+  \item Receive child speech from ESP32.
+  \item Process audio through Gemini Live.
+  \item Save chat messages where applicable.
+  \item Downsample AI response audio to 16 kHz PCM.
+  \item Encode PCM to Opus through a Supabase edge function.
+  \item Send Opus bytes back to the ESP32 over TCP.
+\end{enumerate}
+
+\subsection{Important Mobile Logs}
+
+The user added a green debug log overlay in the app. This became very useful during testing because it showed the exact point of failure in the app pipeline.
+
+One app log showed:
+
+\begin{lstlisting}[style=logstyle]
+GeminiLive|handleMessage: turnComplete -- 136322B PCM, text="Hi there! I'm Zoro! Are you ready to play?"
+GeminiLive|session closed after turn -- next call will reconnect
+VPS|downsampled to 90880B @ 16kHz -- encoding Opus...
+VPS|encode-opus request: pcm=90880B b64=121176 chars
+VPS|encode-opus response: opus=8174B elapsed=1867ms
+VPS|Opus ready -- 8174B (9.0% of WAV)
+VPS|ESP32 not connected -- skipping WiFi send
+VPS|pipeline result: success=true error=
+\end{lstlisting}
+
+This proved three things:
+
+\begin{itemize}[leftmargin=*]
+  \item Gemini Live was working.
+  \item Opus encoding was working.
+  \item The failure was at the final app-to-ESP32 TCP send step.
+\end{itemize}
+
+The misleading part was:
+
+\begin{lstlisting}[style=logstyle]
+success=true
+\end{lstlisting}
+
+The app said the pipeline succeeded even though the response was not sent to the toy. This was fixed so the app now returns a failure when ESP32 disconnects before the response send.
+
+\section{App-Side Fixes Implemented}
+
+\subsection{Android Permissions and Native NSD Module}
+
+Android networking discovery required additional permissions and a native module.
+
+The Android manifest was updated with WiFi/nearby discovery permissions, including:
+
+\begin{itemize}[leftmargin=*]
+  \item \texttt{ACCESS\_WIFI\_STATE}
+  \item \texttt{CHANGE\_WIFI\_MULTICAST\_STATE}
+  \item \texttt{NEARBY\_WIFI\_DEVICES} for Android 13+
+  \item \texttt{ACCESS\_FINE\_LOCATION} for Android 12 and older runtime-permission devices
+\end{itemize}
+
+Native Android files were added:
+
+\begin{itemize}[leftmargin=*]
+  \item \texttt{Esp32NsdModule.kt}
+  \item \texttt{Esp32NsdPackage.kt}
+\end{itemize}
+
+The package was registered in:
+
+\begin{lstlisting}[style=logstyle]
+android/app/src/main/java/com/ai_toy_companion/MainApplication.kt
+\end{lstlisting}
+
+\subsection{ESP32 Discovery Service}
+
+A new app-side service was added:
+
+\begin{lstlisting}[style=logstyle]
+src/services/Esp32DiscoveryService.ts
+\end{lstlisting}
+
+Discovery order:
+
+\begin{enumerate}[leftmargin=*]
+  \item Try UDP broadcast on port 8766.
+  \item If UDP fails, try Android NSD with service types:
+    \texttt{\_tcp.\_tcp.} and \texttt{\_esp32audio.\_tcp.}.
+  \item If discovery fails, use fallback IP.
+\end{enumerate}
+
+Final relevant configuration:
+
+\begin{lstlisting}[style=logstyle]
+ESP32_IP = "esp32audio.local"
+ESP32_PORT = 8765
+ESP32_NSD_SERVICE_TYPES = ["_tcp._tcp.", "_esp32audio._tcp."]
+ESP32_FALLBACK_IPS = ["192.168.1.44"]
+\end{lstlisting}
+
+\subsection{Raw TCP Service}
+
+A new app-side TCP wrapper was added:
+
+\begin{lstlisting}[style=logstyle]
+src/services/WiFiTCPService.ts
+\end{lstlisting}
+
+This service uses \texttt{react-native-tcp-socket} and centralizes:
+
+\begin{itemize}[leftmargin=*]
+  \item Connecting to ESP32.
+  \item Sending text commands.
+  \item Sending raw binary bytes.
+  \item Receiving TCP data.
+  \item Tracking connected/disconnected state.
+  \item Handling socket timeout and error cases.
+\end{itemize}
+
+\subsection{Mixed Text/Binary Parser}
+
+The firmware can send data in this pattern:
+
+\begin{lstlisting}[style=logstyle]
+STREAM_START:<file>
+[binary WAV header + PCM chunks]
+STREAM_END:<file>:<bytes>
+READY_FOR_RESPONSE
+\end{lstlisting}
+
+TCP does not preserve message boundaries. Therefore, the app may receive text and binary data in the same read event. A naive parser can treat a mixed packet as either all text or all binary, breaking the pipeline.
+
+The app-side parser in:
+
+\begin{lstlisting}[style=logstyle]
+src/services/ESP32WiFiService.ts
+\end{lstlisting}
+
+was updated to handle:
+
+\begin{itemize}[leftmargin=*]
+  \item \texttt{STREAM\_START} followed immediately by binary bytes.
+  \item Binary chunks followed immediately by \texttt{STREAM\_END}.
+  \item \texttt{STREAM\_END} and \texttt{READY\_FOR\_RESPONSE} arriving in the same TCP read.
+  \item Partial text markers split across TCP reads.
+  \item Binary data that contains printable ASCII-like bytes.
+\end{itemize}
+
+\subsection{Duplicate Connection Prevention}
+
+The firmware log \texttt{[TCP] Old client replaced} indicated repeated app-side TCP connection attempts. To address this, the mobile code was changed at multiple layers.
+
+In \texttt{WiFiTCPService}:
+
+\begin{itemize}[leftmargin=*]
+  \item If the same host and port are already connected, the service now returns \texttt{true} and reuses the existing socket.
+  \item If a connection to the same host and port is already in progress, the service returns the same pending promise instead of opening a second TCP client.
+  \item If a different socket needs to be opened, the old socket is explicitly disconnected first.
+\end{itemize}
+
+Expected log after the fix:
+
+\begin{lstlisting}[style=logstyle]
+[TCP] Reusing existing connection to 192.168.1.44:8765
+\end{lstlisting}
+
+In \texttt{HomeScreen}:
+
+\begin{itemize}[leftmargin=*]
+  \item A \texttt{pipelineStartingRef} guard was added.
+  \item Refresh/connect taps cannot start the same pipeline repeatedly while a connect attempt is active.
+  \item The already-connected toy path now exits early instead of starting another TCP connection.
+\end{itemize}
+
+In \texttt{VoiceProcessingService}:
+
+\begin{itemize}[leftmargin=*]
+  \item \texttt{connectToESP32} now reuses the existing connection when already connected.
+  \item The Gemini Live path now returns an error when ESP32 disconnects before the response send.
+\end{itemize}
+
+\subsection{Correct Failure Reporting}
+
+Previously, the app could log:
+
+\begin{lstlisting}[style=logstyle]
+VPS|ESP32 not connected -- skipping WiFi send
+VPS|pipeline result: success=true error=
+\end{lstlisting}
+
+This was corrected. If the app reaches the send step and ESP32 is disconnected, the result now becomes:
+
+\begin{lstlisting}[style=logstyle]
+VPS|ESP32 disconnected before response send
+VPS|pipeline result: success=false error=ESP32 disconnected before response send
+\end{lstlisting}
+
+This matters for PM/client testing because the app no longer hides a failed speaker response behind a success flag.
+
+\subsection{React Native Buffer Runtime Fix}
+
+After the duplicate-connection fix, a new app runtime error appeared in the green debug overlay:
+
+\begin{lstlisting}[style=logstyle]
+VPS|pipeline result: success=false error=Property 'Buffer' doesn't exist
+\end{lstlisting}
+
+Root cause:
+
+\begin{itemize}[leftmargin=*]
+  \item \texttt{WiFiTCPService} used \texttt{Buffer.from(...)} for raw TCP binary writes.
+  \item Jest/Node tests had \texttt{Buffer} globally available.
+  \item React Native release runtime did not expose Node's \texttt{Buffer} global.
+\end{itemize}
+
+Fix:
+
+\begin{lstlisting}[style=logstyle]
+const { Buffer } = require("buffer");
+\end{lstlisting}
+
+This imports \texttt{Buffer} explicitly from the installed \texttt{buffer} package, which is already available through \texttt{react-native-tcp-socket}.
+
+\section{Firmware/App Interaction Issues Found}
+
+\begin{longtable}{p{0.24\linewidth}p{0.36\linewidth}p{0.32\linewidth}}
+\toprule
+Issue & Evidence & Resolution \\
+\midrule
+\endhead
+Manual TCP works but app does not & TCP Client app connected to \texttt{192.168.1.44:8765} and \texttt{esp32audio.local:8765}. & Added app discovery and TCP service instead of relying only on manual IP entry. \\
+\addlinespace
+mDNS/NSD needed & Firmware used \texttt{MDNS.begin("esp32audio")} and \texttt{MDNS.addService("tcp","tcp",8765)}. & Added Android NSD module and service type lookup. \\
+\addlinespace
+UDP broadcast available & Firmware sends \texttt{ESP32AUDIO:<ip>:<port>} on UDP port 8766. & App discovery now tries UDP before NSD. \\
+\addlinespace
+TCP message boundaries unreliable & Firmware sends text markers and binary PCM over one TCP stream. & App parser handles mixed text/binary packets and split markers. \\
+\addlinespace
+Duplicate app connections & Firmware printed \texttt{[TCP] Old client replaced}. & Added connection reuse and in-progress connection guard. \\
+\addlinespace
+False success reporting & App logged \texttt{success=true} after skipping WiFi send. & App now returns failure when ESP32 is disconnected before response send. \\
+\addlinespace
+Runtime \texttt{Buffer} crash & Green debug overlay showed \texttt{Property 'Buffer' doesn't exist}. & Explicitly imported \texttt{Buffer} from \texttt{buffer}. \\
+\bottomrule
+\end{longtable}
+
+\section{Testing and Verification}
+
+\subsection{Automated Tests}
+
+Tests were added/updated in:
+
+\begin{lstlisting}[style=logstyle]
+__tests__/Esp32Connection.test.ts
+\end{lstlisting}
+
+Coverage includes:
+
+\begin{itemize}[leftmargin=*]
+  \item TCP socket creation failure returns \texttt{false} instead of crashing.
+  \item TCP connect timeout destroys the stalled socket and returns \texttt{false}.
+  \item Duplicate connect to the same host/port reuses the existing connection.
+  \item Android 13+ denied nearby WiFi permission prevents NSD from running.
+  \item UDP broadcast discovery wins before NSD.
+  \item NSD resolves the firmware's \texttt{\_tcp.\_tcp.} service type.
+  \item Android 12 and older devices request \texttt{ACCESS\_FINE\_LOCATION}.
+  \item Parser handles \texttt{STREAM\_START}, WAV binary data, \texttt{STREAM\_END}, and \texttt{READY\_FOR\_RESPONSE} in one TCP read.
+\end{itemize}
+
+Latest test result:
+
+\begin{lstlisting}[style=logstyle]
+npm test -- --runInBand
+PASS __tests__/App.test.tsx
+PASS __tests__/Esp32Connection.test.ts
+Test Suites: 2 passed, 2 total
+Tests: 9 passed, 9 total
+\end{lstlisting}
+
+\subsection{Android Builds}
+
+Debug and release builds were run during the process. The latest release build completed successfully:
+
+\begin{lstlisting}[style=logstyle]
+cd android
+.\gradlew.bat assembleRelease
+BUILD SUCCESSFUL
+\end{lstlisting}
+
+Latest APK path:
+
+\begin{lstlisting}[style=logstyle]
+android/app/build/outputs/apk/release/app-release.apk
+\end{lstlisting}
+
+Latest artifact size was approximately 58.9 MB.
+
+\subsection{Lint Status}
+
+A focused ESLint check was attempted on touched files. It still reports existing unrelated \texttt{HomeScreen} lint debt, including unused imports and inline styles. These lint issues did not block the Android release build and were not introduced as part of the core TCP fix.
+
+Important distinction:
+
+\begin{itemize}[leftmargin=*]
+  \item Jest tests passed.
+  \item Android release APK build passed.
+  \item Full/focused lint still has pre-existing UI cleanup items.
+\end{itemize}
+
+\section{Current Expected Pipeline}
+
+The expected final flow is:
+
+\begin{enumerate}[leftmargin=*]
+  \item App starts and loads connected toy.
+  \item App discovers ESP32 using UDP or NSD/mDNS, with fallback IP available.
+  \item App opens one TCP connection to the ESP32.
+  \item Repeated refreshes or connect taps reuse the same connection.
+  \item Firmware streams child audio to app.
+  \item App parses mixed TCP text/binary stream into a complete WAV/PCM buffer.
+  \item Gemini Live returns text and 24 kHz PCM.
+  \item App downsamples to 16 kHz PCM.
+  \item App calls Supabase \texttt{encode-opus}.
+  \item App sends raw Opus bytes over the existing TCP socket.
+  \item App sends \texttt{DONE:response.opus}.
+  \item Firmware closes \texttt{/tts\_rx.opus}, decodes Opus, and plays audio.
+\end{enumerate}
+
+\section{Known Risks and Follow-Up}
+
+\subsection{Android Local WiFi Plus Internet Routing}
+
+The pipeline uses local WiFi for the ESP32 and internet access for Gemini/Supabase. Some Android devices may switch route preference between WiFi and mobile data if the WiFi network has no internet. This can still affect long-running local TCP sockets.
+
+The current fixes reduce duplicate connections and improve reporting, but end-to-end field testing is still needed on the exact target phones and WiFi/hotspot setup.
+
+\subsection{Firmware Timeout Sensitivity}
+
+The firmware waits in \texttt{STREAMING} mode for the Opus response. Gemini plus Opus encoding can take several seconds. The logs seen so far show the firmware can remain in this state, but field testing should confirm whether any firmware watchdog, socket timeout, or WiFi sleep behavior closes the connection during longer AI responses.
+
+\subsection{Debug Overlay}
+
+The user intentionally added the green debug overlay and wants it kept. It is useful for field testing because it shows:
+
+\begin{itemize}[leftmargin=*]
+  \item Gemini messages.
+  \item PCM and Opus sizes.
+  \item Encode timing.
+  \item Whether the ESP32 send step succeeds or fails.
+\end{itemize}
+
+\section{Recommended PM/Client Testing Checklist}
+
+\begin{enumerate}[leftmargin=*]
+  \item Install the latest release APK.
+  \item Connect phone and ESP32 to the same WiFi or hotspot.
+  \item Confirm ESP32 serial log prints a single \texttt{Client connected} event.
+  \item Press and hold the toy button and speak for 1--2 seconds.
+  \item Confirm firmware logs:
+    \begin{itemize}
+      \item \texttt{STREAM\_START}
+      \item \texttt{STREAM\_END}
+      \item \texttt{READY\_FOR\_RESPONSE}
+    \end{itemize}
+  \item Confirm app green overlay logs:
+    \begin{itemize}
+      \item Gemini response received.
+      \item Opus encoded.
+      \item \texttt{response.opus sent to ESP32}.
+    \end{itemize}
+  \item Confirm firmware logs:
+    \begin{itemize}
+      \item Opus chunks received.
+      \item \texttt{DONE} queued/processed.
+      \item Speaker playback completed.
+    \end{itemize}
+  \item Repeat the test after refreshing the home screen to confirm the app does not create repeated TCP connections.
+  \item Watch for absence of \texttt{[TCP] Old client replaced} during normal single-app use.
+\end{enumerate}
+
+\section{Conclusion}
+
+The team moved from manual TCP proof-of-connectivity to an integrated app/firmware WiFi voice pipeline. The firmware developer provided the critical protocol and discovery details: mDNS, UDP broadcast, TCP port, live audio stream markers, and Opus receive mode. The app work then implemented discovery, native Android NSD support, a TCP transport layer, robust mixed-stream parsing, duplicate-connection prevention, accurate failure reporting, and the React Native binary runtime fix.
+
+The latest automated tests pass and the release APK builds successfully. The next validation step is physical end-to-end testing with the latest APK and ESP32 firmware logs, specifically confirming that \texttt{response.opus} is sent and played without repeated \texttt{Old client replaced} events.
+
+\end{document}

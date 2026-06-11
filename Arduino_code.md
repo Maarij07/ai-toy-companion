@@ -1,6 +1,46 @@
 // ============================================================
-//  INMP441 WAV Recorder + BLE UART + MAX98357A Playback — v15.0
-//  ESP32-S3  |  LittleFS  |  NimBLE 2.x  |  Opus decode
+//  INMP441 WAV Recorder + WiFi TCP + MAX98357A Playback — v1.0
+//  ESP32-S3  |  LittleFS  |  WiFi TCP Socket  |  Opus decode
+//
+//  MIGRATED FROM BLE v16.0 → WiFi TCP v1.0
+//  Replaces NimBLE UART with raw TCP sockets over WiFi.
+//  Target latency: 2–4 seconds (down from 7–10s over BLE).
+//
+//  WHY RAW TCP (not WebSocket, not MQTT):
+//    WebSocket  = TCP + HTTP upgrade handshake. Good for browsers.
+//                 Adds framing overhead, not needed here.
+//    MQTT       = pub/sub via broker. Great for many tiny sensors.
+//                 Routes through a broker = extra network hop. Bad for audio.
+//    Raw TCP    = direct binary pipe. ESP32 is the server, app connects
+//                 directly. No overhead, no broker, no framing. Best for
+//                 streaming large binary blobs (audio) between 2 devices.
+//
+//  NETWORK TOPOLOGY:
+//    Phone App ──WiFi──► Router/Hotspot ──WiFi──► ESP32
+//              TCP Socket port 8765
+//    Both devices must be on the SAME WiFi network.
+//    Recommended: ESP32 connects to phone's mobile hotspot.
+//    Then the ESP32's IP is printed to Serial on boot — use that in your app.
+//
+//  FLOW (identical to BLE version, just faster):
+//  1. ESP32 records voice → streams live PCM chunks to app via TCP
+//  2. App sends SENDALL → ESP32 streams all files → deletes them
+//  3. After ALL files sent → ESP32 sends LISTENING to app
+//  4. App sends length-prefixed raw Opus packets in TCP stream
+//  5. App sends DONE:filename.opus
+//  6. ESP32 decodes Opus from LittleFS → plays on MAX98357A speaker
+//  7. ESP32 sends PLAYED:filename.opus back to app
+//
+//  KEY CHANGE vs BLE version:
+//    • No delay() between audio chunks — TCP flow control handles pacing
+//    • TCP_CHUNK_SIZE = 1460 (TCP MSS, fills one Ethernet frame)
+//      vs BLE_CHUNK_SIZE = 500 (BLE MTU limit)
+//    • No ACK mode needed — TCP guarantees delivery natively
+//    • No MTU negotiation — TCP handles segmentation transparently
+//
+//  LATENCY IMPROVEMENT:
+//    240KB audio over BLE (500B chunks + 10ms delay): ~4.8s
+//    240KB audio over TCP (1460B chunks, no delay):   ~0.2s
 //
 //  WIRING — INMP441 (microphone) on I2S_NUM_0:
 //    SCK  → GPIO 40
@@ -16,111 +56,37 @@
 //    GND  → GND
 //    SD   → leave floating or 3.3V (enables amp)
 //
-//  FLOW:
-//  1. ESP32 records voice → saves to LittleFS
-//  2. App sends SENDALL → ESP32 streams all files → deletes them
-//  3. After ALL files sent → ESP32 sends LISTENING to app
-//  4. App sends length-prefixed raw Opus packets in 500-byte BLE chunks
-//  5. App sends DONE:filename.opus
-//  6. ESP32 decodes Opus from LittleFS → plays on MAX98357A speaker
-//  7. ESP32 sends PLAYED:filename.opus back to app
-//
-//  v15.0 — Opus decode replaces WAV playback
-//
-//  WHY OPUS:
-//    WAV 16kHz 16-bit mono = 32,000 bytes/sec → 240KB for 7.5s → 483 BLE chunks → ~4.8s transfer
-//    Opus 24kbps mono      =  3,000 bytes/sec →  22KB for 7.5s →  45 BLE chunks → ~0.45s transfer
-//    10× smaller file, near-transparent voice quality, no perceptible degradation.
-//
-//  OPUS FRAMING (what app must send):
-//    Raw Opus packets with 2-byte little-endian length prefix per packet.
-//    NO Ogg container — raw packets only. This avoids Ogg parser on ESP32.
-//    Format: [uint16_t len][len bytes of Opus data][uint16_t len][...] ...
-//    Frame size: 20ms (320 samples at 16kHz) — standard for TTS.
-//    The full file is just this sequence of length-prefixed packets.
-//
-//  DECODE PERFORMANCE:
-//    ESP32-S3 LX7 @ 240MHz decodes Opus at ~0.004ms per 20ms frame.
-//    375 frames for 7.5s audio = ~1.5ms total decode overhead.
-//    No buffer needed — decode → i2s_write directly per frame.
-//    I2S DMA handles timing naturally.
-//
 //  ARDUINO LIBRARY REQUIRED:
 //    Install: pschatzmann/arduino-libopus
 //    Arduino IDE: Sketch → Include Library → Manage Libraries → "libopus"
-//    PlatformIO:  lib_deps = pschatzmann/arduino-libopus
 //
-//  APP SIDE TTS SETTINGS:
-//    ElevenLabs:  output_format = "opus_16000"
-//    OpenAI TTS:  response_format = "opus"
-//    Google TTS:  audioEncoding = "OGG_OPUS", sampleRateHertz = 16000
-//    (App must strip Ogg container and send raw length-prefixed packets)
-//
-//  v13.0 SOLUTION (base) — LittleFS-first TTS receive:
-//    BLE onWrite() → f.write() to /tts_rx.opus  (no tasks, no races)
-//    DONE received → close file → playOpusFromLittleFS()
-//    Decode loop: read 2-byte len → read packet → opus_decode → upmix → i2s_write
-//
-//  COMMANDS:
-//
-//  v10.0 CHANGES — fixes distorted / silent BLE→Speaker streaming:
-//
-//  FIX 1 — Decouple BLE from I2S (root cause of distortion):
-//    Old: streamChunkToSpeaker() called i2s_write() directly from
-//         BLE onWrite() callback → blocked BLE stack → jitter → stutter
-//    New: BLE callback only enqueues into a FreeRTOS ring buffer.
-//         spkWriterTask() on Core 1 (priority 5) drains to I2S at a
-//         perfectly steady rate. BLE and I2S are fully decoupled.
-//
-//  FIX 2 — DONE packet race condition (root cause of silence):
-//    Old: exitStreamPlayback() stopped immediately on DONE, before the
-//         ring buffer had time to drain → prebuffer never reached
-//         threshold → writer task never started → silence
-//    New: exitStreamPlayback() waits for ring buffer to fully drain
-//         before zeroing I2S. PLAYED: is only sent after real playback.
-//
-//  FIX 3 — use_apll=true for cleaner I2S clock (reduces metallic tone)
-//
-//  v11.0 CHANGES — fixes audio cut-off before amp finishes playing:
-//
-//  ROOT CAUSE (confirmed via serial log analysis):
-//    Ring buffer drained in ~0ms → i2s_zero_dma_buffer() fired immediately
-//    after DONE arrived. But the I2S DMA ring (16 bufs × 512 samples)
-//    still held ~512ms of audio that the MAX98357A amp hadn't played yet.
-//    Zeroing DMA mid-playback = silent/clipped output.
-//
-//  FIX 4 — DMA flush delay in exitStreamPlayback():
-//    After ring buffer drains, wait for the full I2S DMA pipeline to
-//    empty before calling i2s_zero_dma_buffer(). Delay is computed
-//    from actual DMA config (dma_buf_count × dma_buf_len) so it stays
-//    accurate if you change those values.
-//    Formula: (dma_buf_count * dma_buf_len * 1000) / sample_rate ms
-//    = (16 * 512 * 1000) / 16000 = 512ms + 150ms safety margin.
-//
-//  FIX 5 — spkWriterTask prebuffer gate made stream-end safe:
-//    Added spkDraining flag so the writer task keeps draining to I2S
-//    even after spkStreaming goes false (DONE received). Without this,
-//    the task could idle-reset prebufReady and stop writing while DMA
-//    still had data to flush. Now it drains fully before resetting.
-//
-//  COMMANDS:
+//  COMMANDS (same as BLE version, sent over TCP):
 //  LIST                → show all recorded files
 //  SENDALL             → send all files + auto-listen after
-//  SEND:rec_0000.wav   → send one file (no auto-listen)
-//  STATUS              → flash usage + current state + ring buf level
+//  SEND:rec_0000.wav   → send one file
+//  STATUS              → flash usage + current state
 //  STREAM_MODE         → test: send WAV chunks then DONE:filename.wav
-//  ACK_ON / ACK_OFF    → flow control for file transfer
 //  FORMAT              → wipe all recordings
 //  HELP                → show commands
 // ============================================================
 
 #include <Arduino.h>
 #include <driver/i2s.h>
-#include <NimBLEDevice.h>
+#include <WiFi.h>
+#include <WiFiClient.h>
+#include <WiFiServer.h>
 #include "FS.h"
 #include "LittleFS.h"
-#include <math.h>           // for sinf() — used by startup tone
+#include <math.h>
 #include "opus.h"           // arduino-libopus by pschatzmann
+
+// ============================================================
+//  ★ CONFIGURE THESE ★
+// ============================================================
+#define WIFI_SSID     "YourSSID"        // WiFi network name
+#define WIFI_PASS     "YourPassword"    // WiFi password
+#define TCP_PORT      8765              // TCP server port (app connects to this)
+// ============================================================
 
 // ── INMP441 — I2S_NUM_0 (microphone input) ───────────────────
 #define MIC_SCK_PIN   40
@@ -133,18 +99,13 @@
 #define SPK_DIN_PIN   17
 
 // ── Button — hold to record, release to stop ─────────────────
-// Wired: GPIO → button → GND  (internal pull-up enabled)
 #define BTN_PIN       2
 
 // ── RGB LED pins (common cathode) ────────────────────────────
-// Each pin through a 330Ω resistor to LED leg
-// GREEN  = recording  |  BLUE = sending  |  YELLOW = receiving
 #define LED_R_PIN     4
 #define LED_G_PIN     5
 #define LED_B_PIN     6
 
-// Common cathode: HIGH = on, LOW = off
-// If you have common anode, swap these
 #define LED_ON        HIGH
 #define LED_OFF       LOW
 
@@ -159,38 +120,25 @@ inline void ledYellow() { digitalWrite(LED_R_PIN,LED_ON);  digitalWrite(LED_G_PI
 #define I2S_BUF_LEN      512
 
 // ── STREAMING ─────────────────────────────────────────────────
-// When BLE is connected, audio chunks stream live to app
-// instead of saving to LittleFS first.
-// App receives: STREAM_START\n → [PCM chunks] → STREAM_END\n
-// Each chunk is raw 16-bit PCM (no WAV header mid-stream).
-// WAV header sent once at STREAM_START as first 44 bytes.
-// Falls back to LittleFS recording if BLE disconnected.
-#define STREAM_CHUNK_SAMPLES  256   // 256 samples = 16ms per chunk at 16kHz
-                                    // Small chunks = low latency, STT can start fast
+// Chunk size for live PCM streaming during recording.
+// 256 samples = 16ms per chunk at 16kHz — low latency, STT starts fast.
+// TCP can carry much larger chunks but small chunks keep latency low.
+#define STREAM_CHUNK_SAMPLES  256
 
-// ── VOICE DETECTION ──────────────────────────────────────────
+// ── TCP ───────────────────────────────────────────────────────
+// 1460 = standard TCP MSS (Maximum Segment Size).
+// This fills exactly one Ethernet/WiFi frame — most efficient transfer size.
+// For comparison BLE was limited to 500 bytes by the ATT MTU.
+#define TCP_CHUNK_SIZE   1460
 
 // ── STORAGE ──────────────────────────────────────────────────
 #define FLASH_FULL_RATIO  0.85f
 
-// ── BLE ──────────────────────────────────────────────────────
-#define BLE_DEVICE_NAME  "ESP32_Recorder"
-#define NUS_SERVICE_UUID "6E400001-B5A3-F393-E0A9-E50E24DCCA9E"
-#define NUS_RX_UUID      "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"
-#define NUS_TX_UUID      "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"
-#define BLE_CHUNK_SIZE   500
+// ── TTS receive file ─────────────────────────────────────────
+#define TTS_RX_PATH      "/tts_rx.opus"
+static volatile uint32_t rxChunkCount = 0;
 
-// ── v15: LittleFS-first Opus receive ─────────────────────────
-// Incoming Opus packets are written directly to LittleFS.
-// When DONE is received the file is decoded and played.
-// Format: length-prefixed raw Opus packets (no Ogg container).
-// [uint16_t len][opus bytes][uint16_t len][opus bytes]...
-#define TTS_RX_PATH      "/tts_rx.opus"  // temp file for received Opus audio
-static volatile uint32_t rxChunkCount = 0;  // chunk counter for debug logging
-
-// ── Receive buffer — heap allocated when first needed ─────────
-// 512KB = ~16 seconds of 16kHz 16-bit audio
-// Reduce if you see heap allocation errors
+// ── Receive buffer ────────────────────────────────────────────
 #define RX_BUF_MAX  (512 * 1024)
 
 // ── Command queue ─────────────────────────────────────────────
@@ -227,13 +175,15 @@ static int16_t gPcmBuf[I2S_BUF_LEN];
 static int32_t gVadBuf[I2S_BUF_LEN];
 
 volatile bool  recording       = false;
-volatile bool  bleTransferring = false;
+volatile bool  wifiTransferring = false;
 uint16_t       fileIndex       = 0;
 uint32_t       lastRecTime     = 0;
-volatile bool  streaming       = false;   // true when live-streaming to app
+volatile bool  streaming       = false;
 
-NimBLECharacteristic* pTxChar      = nullptr;
-volatile bool         bleConnected = false;
+// ── WiFi / TCP ───────────────────────────────────────────────
+WiFiServer   tcpServer(TCP_PORT);
+WiFiClient   tcpClient;
+volatile bool wifiConnected = false;    // true when a TCP client is connected
 
 // ── Receive state machine ─────────────────────────────────────
 enum class RxState { COMMAND, LISTENING, STREAMING };
@@ -242,83 +192,95 @@ uint8_t*         rxBuffer  = nullptr;
 uint32_t         rxBufSize = 0;
 uint32_t         rxBufUsed = 0;
 
-bool spkInitialised   = false;
-// v13: no spkStreaming/spkDraining/ring buffer — LittleFS handles receive
-uint32_t      wavBytesSkip   = 0;
-uint32_t      wavHdrUsed     = 0;
-static uint8_t wavHdrBuf[256];
-bool           wavHdrDone_g   = false;
+bool spkInitialised = false;
 
-// v13: LittleFS file handle for incoming TTS chunks
+// ── LittleFS file handle for incoming TTS chunks ──────────────
 static File    ttsRxFile;
 static bool    ttsRxOpen  = false;
-static uint32_t ttsRxBytes = 0;   // running byte count — f.size() is stale until file closed
+static uint32_t ttsRxBytes = 0;
 
-// ── BLE Flow Control ──────────────────────────────────────────
-// ACK mode is OPTIONAL — enabled only when custom IoT app sends "ACK_ON"
-// In ACK mode: ESP32 waits for "ACK\n" after each binary chunk (reliable)
-// In no-ACK mode: simple delay between chunks (works with any BLE tool)
-// App enables ACK mode by sending command: ACK_ON
-// App disables ACK mode by sending command: ACK_OFF
-#define ACK_TIMEOUT_MS       5000
-#define ACK_TOKEN            "ACK"
-#define BLE_TEXT_DELAY_MS    20
-#define BLE_NOACK_DELAY_MS   20   // delay when ACK mode off
+// ── TCP receive staging buffer ────────────────────────────────
+// We read from the TCP stream in large chunks for efficiency.
+// The incoming data can be a mix of command text and binary Opus data.
+#define TCP_RX_BUF_SIZE  4096
+static uint8_t tcpRxStageBuf[TCP_RX_BUF_SIZE];
 
-SemaphoreHandle_t ackSemaphore = nullptr;
-volatile bool     ackModeEnabled = false;  // disabled by default
+// ── PSRAM Ring Buffer — streaming Opus decode-on-receive ──────
+// 8192 stereo int16 pairs = 512ms of audio at 16kHz.
+// Power-of-2 size enables fast bitwise modulo masking.
+// SPSC: Core 0 (WiFi task) writes, Core 1 (streamPlayTask) reads.
+#define STREAM_RING_STEREO  8192
+#define STREAM_RING_MASK    (STREAM_RING_STEREO - 1)
+
+static int16_t*          streamRingBuf        = nullptr;
+static volatile uint32_t streamRingWritePos   = 0;  // monotonic, Core 0 owns
+static volatile uint32_t streamRingReadPos    = 0;  // monotonic, Core 1 owns
+static volatile bool     streamRingDone       = false;
+static volatile bool     streamPlayStarted    = false;
+static TaskHandle_t      streamPlayTaskHandle = nullptr;
+
+// Start playback after 3 Opus frames buffered (3×320 = 960 stereo pairs ≈ 60ms)
+#define STREAM_PLAY_THRESHOLD  960
+
+// ── Opus packet reassembly state ──────────────────────────────
+// Incoming TCP chunks carry [uint16_t len LE][opus_bytes] stream.
+// A packet may span multiple TCP reads — we reassemble here.
+static OpusDecoder* streamDec          = nullptr;
+static uint8_t      streamOpusPkt[400];
+static uint16_t     streamOpusExpected = 0;  // 0 = waiting for 2-byte length
+static uint16_t     streamOpusReceived = 0;
+static uint8_t      streamLenBuf[2];
+static uint8_t      streamLenHave      = 0;  // 0 or 1 bytes received so far
 
 // ============================================================
-//  BLE SEND
+//  TCP SEND HELPERS
+//  Drop-in replacements for bleSendRaw() / bleSendBinary()
 // ============================================================
 
-// Text notification — simple delay, NO ACK wait.
-// Used for: CONNECTED, STATUS, NEW:, FILE:, END:, DELETED:,
-//           LISTENING, PLAYED:, ERROR: — all text signals.
-void bleSendRaw(const String& msg) {
-  if (!bleConnected || !pTxChar) return;
-  int len = msg.length(), pos = 0;
-  while (pos < len) {
-    int end = min(pos + BLE_CHUNK_SIZE, len);
-    pTxChar->setValue((uint8_t*)msg.c_str() + pos, end - pos);
-    pTxChar->notify();
-    pos = end;
-    delay(BLE_TEXT_DELAY_MS);
-  }
+// Send a text string over TCP.
+// No chunking delay needed — TCP flow control handles backpressure.
+void tcpSendRaw(const String& msg) {
+  if (!wifiConnected || !tcpClient || !tcpClient.connected()) return;
+  tcpClient.print(msg);
 }
 
-// Alias for readability
-void bleSend(const String& msg) { bleSendRaw(msg); }
+// Alias for readability (was bleSend)
+void tcpSend(const String& msg) { tcpSendRaw(msg); }
 
-// Binary data sender.
-// ACK mode ON  (custom IoT app): waits for "ACK\n" per chunk — reliable
-// ACK mode OFF (nRF Connect etc): simple delay — works with any BLE tool
-// Returns bytes sent — less than len means transfer aborted.
-size_t bleSendBinary(const uint8_t* data, size_t len) {
-  if (!bleConnected || !pTxChar) return 0;
-  size_t pos = 0;
-  while (pos < len) {
-    if (!bleConnected) { Serial.println("[BLE] Disconnected mid-transfer"); return pos; }
-    size_t chunk = min((size_t)BLE_CHUNK_SIZE, len - pos);
-
-    if (ackModeEnabled) {
-      // ACK mode — wait for app confirmation before next chunk
-      xSemaphoreTake(ackSemaphore, 0);  // clear stale
-      pTxChar->setValue((uint8_t*)data + pos, chunk);
-      pTxChar->notify();
-      if (xSemaphoreTake(ackSemaphore, pdMS_TO_TICKS(ACK_TIMEOUT_MS)) != pdTRUE) {
-        Serial.printf("[BLE] ACK timeout at byte %u/%u\n", pos, len);
-        return pos;
-      }
-    } else {
-      // No-ACK mode — simple delay, works with any BLE app/tool
-      pTxChar->setValue((uint8_t*)data + pos, chunk);
-      pTxChar->notify();
-      delay(BLE_NOACK_DELAY_MS);
+// Send binary data over TCP in TCP_CHUNK_SIZE pieces.
+// Returns bytes sent — less than len means the client disconnected.
+// KEY DIFFERENCE FROM BLE: NO delay() between chunks.
+// TCP's own flow control (sliding window / Nagle) handles pacing.
+// This is why transfer is ~25× faster than BLE with delay(10).
+size_t tcpSendBinary(const uint8_t* data, size_t len) {
+  if (!wifiConnected || !tcpClient || !tcpClient.connected()) return 0;
+  size_t sent = 0;
+  while (sent < len) {
+    if (!tcpClient.connected()) {
+      Serial.println("[TCP] Disconnected mid-transfer");
+      wifiConnected = false;
+      return sent;
     }
-    pos += chunk;
+    size_t chunk   = min((size_t)TCP_CHUNK_SIZE, len - sent);
+    size_t written = tcpClient.write(data + sent, chunk);
+    if (written == 0) {
+      // Socket stalled — give a tiny yield and retry once
+      delay(1);
+      written = tcpClient.write(data + sent, chunk);
+      if (written == 0) break;
+    }
+    sent += written;
   }
-  return pos;
+  return sent;
+}
+
+// Send WAV header over TCP (used at STREAM_START)
+void sendWavHeaderTCP(uint32_t dataSize) {
+  WavHeader h;
+  h.dataSize = dataSize;
+  h.fileSize = dataSize + sizeof(WavHeader) - 8;
+  if (!wifiConnected || !tcpClient || !tcpClient.connected()) return;
+  tcpClient.write((uint8_t*)&h, sizeof(h));
 }
 
 // ============================================================
@@ -330,14 +292,10 @@ void initSpeaker() {
     .mode                 = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_TX),
     .sample_rate          = SAMPLE_RATE,
     .bits_per_sample      = I2S_BITS_PER_SAMPLE_16BIT,
-    // v12: Use RIGHT_LEFT (stereo) instead of ONLY_LEFT.
-    // MAX98357A with SD pin floating/3.3V plays LEFT channel.
-    // ONLY_LEFT on ESP32-S3 with use_apll can output on wrong wire.
-    // RIGHT_LEFT sends same mono data on both slots — amp always hears it.
     .channel_format       = I2S_CHANNEL_FMT_RIGHT_LEFT,
     .communication_format = I2S_COMM_FORMAT_STAND_I2S,
     .intr_alloc_flags     = ESP_INTR_FLAG_LEVEL1,
-    .dma_buf_count        = 8,    // v12: reduced from 16 — cuts DMA flush wait to 256ms
+    .dma_buf_count        = 8,
     .dma_buf_len          = 512,
     .use_apll             = true,
     .tx_desc_auto_clear   = true,
@@ -357,27 +315,13 @@ void initSpeaker() {
 }
 
 // ============================================================
-//  v15: playOpusFromLittleFS — decode Opus file, play on speaker
-//
-//  File format (length-prefixed raw packets, no Ogg container):
-//    [uint16_t pktLen][pktLen bytes Opus][uint16_t pktLen][...]...
-//
-//  Decode loop — NO intermediate PCM buffer:
-//    read 2-byte length header
-//    read Opus packet (max ~400 bytes at 24kbps/20ms)
-//    opus_decode() → 320 PCM samples (20ms @ 16kHz) on stack
-//    upmix mono→stereo on stack (640 samples)
-//    i2s_write() directly — I2S DMA handles timing
-//    repeat until EOF
-//
-//  Decode overhead: ~0.004ms per frame, 375 frames for 7.5s = ~1.5ms total.
-//  I2S DMA keeps the amp fed while the next frame decodes.
+//  Opus playback from LittleFS
 // ============================================================
 void playOpusFromLittleFS(const char* path) {
   File f = LittleFS.open(path, "r");
   if (!f) {
     Serial.printf("[SPK] Cannot open %s\n", path);
-    bleSendRaw("ERROR:Cannot open Opus file\n");
+    tcpSendRaw("ERROR:Cannot open Opus file\n");
     return;
   }
 
@@ -385,75 +329,53 @@ void playOpusFromLittleFS(const char* path) {
   Serial.printf("[SPK] Decoding %s (%u bytes)\n", path, fileSize);
   ledYellow();
 
-  // ── Create Opus decoder ───────────────────────────────────────
-  // 16kHz, mono, no error pointer needed (we check return codes)
   int opusErr = OPUS_OK;
   OpusDecoder* dec = opus_decoder_create(SAMPLE_RATE, 1, &opusErr);
   if (!dec || opusErr != OPUS_OK) {
     Serial.printf("[SPK] Opus decoder create failed: %d\n", opusErr);
     f.close();
-    bleSendRaw("ERROR:Opus decoder init failed\n");
+    tcpSendRaw("ERROR:Opus decoder init failed\n");
     return;
   }
   Serial.println("[SPK] Opus decoder ready — starting playback");
 
-  // ── Stack buffers — no heap allocation ───────────────────────
-  // Opus packet:    max 400 bytes (24kbps × 20ms / 8 bits = 60 bytes typical,
-  //                400 covers bursts and high-quality settings)
-  // PCM output:     320 samples per 20ms frame at 16kHz (max 960 for 60ms)
-  // Stereo output:  640 samples (320 × L + 320 × R) for RIGHT_LEFT I2S format
   uint8_t  opusPkt[400];
-  int16_t  pcmMono[960];    // max 60ms frame — 320 typical for 20ms
-  int16_t  pcmStereo[1920]; // stereo upmix — 640 typical for 20ms
+  int16_t  pcmMono[960];
+  int16_t  pcmStereo[1920];
 
   uint32_t frameCount  = 0;
   uint32_t errorCount  = 0;
-  uint32_t totalPlayed = 0;  // in bytes (stereo int16)
+  uint32_t totalPlayed = 0;
 
-  // ── Decode loop ───────────────────────────────────────────────
   while (f.available()) {
-    // Step 1: read 2-byte packet length
     uint16_t pktLen = 0;
-    if (f.read((uint8_t*)&pktLen, 2) != 2) break;  // EOF or corrupt
+    if (f.read((uint8_t*)&pktLen, 2) != 2) break;
 
-    // Sanity check — valid Opus packet at 24kbps/20ms is 40–80 bytes typical
     if (pktLen == 0 || pktLen > sizeof(opusPkt)) {
-      Serial.printf("[SPK] Bad packet length %u at frame %u — stopping\n",
-                    pktLen, frameCount);
+      Serial.printf("[SPK] Bad packet length %u at frame %u — stopping\n", pktLen, frameCount);
       break;
     }
 
-    // Step 2: read Opus packet bytes
     size_t got = f.read(opusPkt, pktLen);
     if (got != pktLen) {
       Serial.printf("[SPK] Short read %u/%u at frame %u\n", got, pktLen, frameCount);
       break;
     }
 
-    // Step 3: decode Opus → raw PCM (mono int16, 16kHz)
-    // Returns number of decoded samples per channel, or negative error code
     int samples = opus_decode(dec, opusPkt, pktLen, pcmMono,
                               sizeof(pcmMono) / sizeof(int16_t), 0);
     if (samples <= 0) {
       Serial.printf("[SPK] Opus decode error %d at frame %u\n", samples, frameCount);
       errorCount++;
-      if (errorCount > 10) {
-        Serial.println("[SPK] Too many decode errors — aborting");
-        break;
-      }
+      if (errorCount > 10) { Serial.println("[SPK] Too many errors — aborting"); break; }
       continue;
     }
 
-    // Step 4: upmix mono → stereo for RIGHT_LEFT I2S channel format
-    // MAX98357A plays LEFT channel. RIGHT_LEFT sends L+R interleaved.
     for (int i = 0; i < samples; i++) {
-      pcmStereo[i * 2]     = pcmMono[i];  // L
-      pcmStereo[i * 2 + 1] = pcmMono[i];  // R
+      pcmStereo[i * 2]     = pcmMono[i];
+      pcmStereo[i * 2 + 1] = pcmMono[i];
     }
 
-    // Step 5: write stereo PCM directly to I2S DMA — no intermediate buffer
-    // i2s_write() fills the DMA ring and returns immediately.
-    // The DMA hardware clocks out the samples to MAX98357A independently.
     size_t written = 0;
     esp_err_t err = i2s_write(I2S_NUM_1, pcmStereo,
                               samples * 2 * sizeof(int16_t),
@@ -470,10 +392,8 @@ void playOpusFromLittleFS(const char* path) {
   f.close();
   opus_decoder_destroy(dec);
 
-  // ── DMA flush — wait for amp to finish playing ────────────────
-  // DMA buffer = dma_buf_count(8) × dma_buf_len(512) × 2ch × 2bytes = 16384 bytes
-  // At 16kHz stereo: 16384 / (16000 × 2 × 2) = 256ms
-  // Add 100ms safety margin
+  // DMA flush — wait for amp to finish playing
+  // dma_buf_count(8) × dma_buf_len(512) × 2ch × 2bytes / (16000×4) = 256ms + 100ms margin
   vTaskDelay(pdMS_TO_TICKS(356));
   i2s_zero_dma_buffer(I2S_NUM_1);
   ledOff();
@@ -482,28 +402,25 @@ void playOpusFromLittleFS(const char* path) {
                 frameCount, totalPlayed, errorCount);
 }
 
-// Plays raw 16-bit PCM — no WAV header (used by LISTENING mode)
-// v12: upmixes mono to stereo for RIGHT_LEFT I2S channel format
+// ── Play raw 16-bit PCM ───────────────────────────────────────
 void playPCM(const int16_t* pcmData, uint32_t pcmBytes) {
   initSpeaker();
   Serial.printf("[SPK] Playing %u bytes (%.1fs)\n",
     pcmBytes, pcmBytes / (SAMPLE_RATE * 2.0f));
   ledYellow();
 
-  const uint16_t* src    = (const uint16_t*)pcmData;
+  const uint16_t* src         = (const uint16_t*)pcmData;
   uint32_t        monoSamples = pcmBytes / 2;
-
-  // Upmix mono → stereo in chunks
-  static int16_t stereoBuf[256];  // 128 mono samples × 2 channels
-  uint32_t       pos = 0;
+  static int16_t  stereoBuf[256];
+  uint32_t        pos = 0;
 
   while (pos < monoSamples) {
     uint32_t batch = min(monoSamples - pos, (uint32_t)128);
     size_t   outIdx = 0;
     for (uint32_t i = 0; i < batch; i++) {
       int16_t s = (int16_t)src[pos + i];
-      stereoBuf[outIdx++] = s;  // L
-      stereoBuf[outIdx++] = s;  // R
+      stereoBuf[outIdx++] = s;
+      stereoBuf[outIdx++] = s;
     }
     size_t written = 0;
     i2s_write(I2S_NUM_1, stereoBuf, outIdx * 2, &written, pdMS_TO_TICKS(200));
@@ -516,32 +433,16 @@ void playPCM(const int16_t* pcmData, uint32_t pcmBytes) {
 }
 
 // ============================================================
-//  STARTUP TONE — played once on power-on
+//  STARTUP TONE — C5 → E5 → G5 chime on boot
 // ============================================================
-//
-//  Generates a friendly ascending 3-note chime (C5 → E5 → G5)
-//  using pure sine wave math. No audio files, no extra libraries.
-//
-//  Each note:
-//    • Frequency:  defined in noteFreqs[]
-//    • Duration:   defined in noteDurMs[]
-//    • Amplitude:  0–32767 (16-bit PCM range)
-//    • Envelope:   simple linear fade-in + fade-out to avoid clicks
-//
-//  To change the tune, edit noteFreqs[] and noteDurMs[].
-//  To change volume, adjust TONE_AMPLITUDE (max 32767).
-//
-// ─────────────────────────────────────────────────────────────
 void playStartupTone() {
   initSpeaker();
 
-  // ── Tune definition ──────────────────────────────────────
-  // C5=523Hz  E5=659Hz  G5=784Hz  → cheerful major chord arpeggio
   const float    noteFreqs[] = { 523.0f, 659.0f, 784.0f };
   const uint32_t noteDurMs[] = { 140,    140,    280    };
   const int      noteCount   = 3;
-  const int16_t  TONE_AMPLITUDE = 18000;  // volume: 0–32767
-  const uint32_t FADE_SAMPLES   = 200;    // samples for fade in/out (~12ms)
+  const int16_t  TONE_AMPLITUDE = 18000;
+  const uint32_t FADE_SAMPLES   = 200;
 
   Serial.println("[SPK] Playing startup tone");
 
@@ -550,38 +451,26 @@ void playStartupTone() {
     uint32_t durMs   = noteDurMs[n];
     uint32_t samples = (SAMPLE_RATE * durMs) / 1000;
 
-    // Allocate note buffer on stack — max ~280ms * 16000 * 2 = ~9KB
-    // Safe for ESP32-S3 stack
-    static int16_t noteBuf[4480];  // sized for longest note (280ms at 16kHz)
+    static int16_t noteBuf[4480];
     if (samples > sizeof(noteBuf)/sizeof(noteBuf[0]))
         samples = sizeof(noteBuf)/sizeof(noteBuf[0]);
 
     for (uint32_t i = 0; i < samples; i++) {
-      // Pure sine wave
       float t   = (float)i / SAMPLE_RATE;
       float val = sinf(2.0f * M_PI * freq * t) * TONE_AMPLITUDE;
-
-      // Linear fade-in at start
-      if (i < FADE_SAMPLES)
-        val *= (float)i / FADE_SAMPLES;
-
-      // Linear fade-out at end
-      if (i >= samples - FADE_SAMPLES)
-        val *= (float)(samples - i) / FADE_SAMPLES;
-
+      if (i < FADE_SAMPLES)            val *= (float)i / FADE_SAMPLES;
+      if (i >= samples - FADE_SAMPLES) val *= (float)(samples - i) / FADE_SAMPLES;
       noteBuf[i] = (int16_t)val;
     }
 
-    // v12: upmix mono tone to stereo for RIGHT_LEFT channel format
-    static int16_t stereoNoteBuf[8960];  // 4480 mono × 2 channels
+    static int16_t stereoNoteBuf[8960];
     uint32_t stereoCount = 0;
     for (uint32_t i = 0; i < samples; i++) {
       if (stereoCount + 1 >= 8960) break;
-      stereoNoteBuf[stereoCount++] = noteBuf[i];  // L
-      stereoNoteBuf[stereoCount++] = noteBuf[i];  // R
+      stereoNoteBuf[stereoCount++] = noteBuf[i];
+      stereoNoteBuf[stereoCount++] = noteBuf[i];
     }
 
-    // Write stereo to I2S — bypass playPCM() to skip LED change
     const uint8_t* src    = (const uint8_t*)stereoNoteBuf;
     uint32_t       remain = stereoCount * sizeof(int16_t);
     size_t         written = 0;
@@ -591,8 +480,6 @@ void playStartupTone() {
       src    += written;
       remain -= written;
     }
-
-    // Short gap between notes (silence = zeros already in DMA)
     delay(20);
   }
 
@@ -601,86 +488,188 @@ void playStartupTone() {
 }
 
 // ============================================================
-//  PROCESS RECEIVED AUDIO — strip WAV header then play
+//  BABY TUNE — plays during Gemini wait window
 // ============================================================
-void processReceivedAudio(const String& fname) {
-  if (rxBufUsed == 0) {
-    bleSendRaw("ERROR:Empty receive buffer\n");
-    return;
-  }
-  Serial.printf("[RX] Processing %u bytes\n", rxBufUsed);
+#define NOTE_C4   261.63f
+#define NOTE_D4   293.66f
+#define NOTE_E4   329.63f
+#define NOTE_F4   349.23f
+#define NOTE_G4   392.00f
+#define NOTE_A4   440.00f
+#define NOTE_REST 0.0f
 
-  uint32_t dataOffset = 0;
+struct BabyNote { float freq; uint16_t durMs; };
 
-  if (rxBufUsed >= 4 &&
-      rxBuffer[0]=='R' && rxBuffer[1]=='I' &&
-      rxBuffer[2]=='F' && rxBuffer[3]=='F') {
-    // Has WAV header — scan for 'data' chunk
-    dataOffset = 44;  // default standard WAV
-    for (uint32_t i = 12; i < min(rxBufUsed, (uint32_t)256) - 4; i++) {
-      if (rxBuffer[i]=='d' && rxBuffer[i+1]=='a' &&
-          rxBuffer[i+2]=='t' && rxBuffer[i+3]=='a') {
-        dataOffset = i + 8;  // skip 'data' tag + 4-byte size field
-        break;
+static const BabyNote babyMelody[] = {
+  {NOTE_C4,400},{NOTE_C4,400},{NOTE_G4,400},{NOTE_G4,400},
+  {NOTE_A4,400},{NOTE_A4,400},{NOTE_G4,800},
+  {NOTE_F4,400},{NOTE_F4,400},{NOTE_E4,400},{NOTE_E4,400},
+  {NOTE_D4,400},{NOTE_D4,400},{NOTE_C4,800},
+  {NOTE_G4,400},{NOTE_G4,400},{NOTE_F4,400},{NOTE_F4,400},
+  {NOTE_E4,400},{NOTE_E4,400},{NOTE_D4,800},
+  {NOTE_G4,400},{NOTE_G4,400},{NOTE_F4,400},{NOTE_F4,400},
+  {NOTE_E4,400},{NOTE_E4,400},{NOTE_D4,800},
+  {NOTE_C4,400},{NOTE_C4,400},{NOTE_G4,400},{NOTE_G4,400},
+  {NOTE_A4,400},{NOTE_A4,400},{NOTE_G4,800},
+  {NOTE_F4,400},{NOTE_F4,400},{NOTE_E4,400},{NOTE_E4,400},
+  {NOTE_D4,400},{NOTE_D4,400},{NOTE_C4,800},
+  {NOTE_REST,500}
+};
+static const int BABY_MELODY_LEN = sizeof(babyMelody) / sizeof(babyMelody[0]);
+
+volatile bool       babyTunePlaying   = false;
+volatile bool       babyTuneStop      = false;
+static TaskHandle_t babyTuneTaskHandle = nullptr;
+
+static const int16_t BABY_TUNE_AMPLITUDE = 22000;
+#define BABY_CHUNK_MONO_SAMPLES 512
+
+void babyTuneTask(void* param) {
+  static int16_t monoBuf[BABY_CHUNK_MONO_SAMPLES];
+  static int16_t stereoBuf[BABY_CHUNK_MONO_SAMPLES * 2];
+
+  Serial.println("[TUNE] Baby tune task started");
+
+  while (!babyTuneStop) {
+    for (int n = 0; n < BABY_MELODY_LEN && !babyTuneStop; n++) {
+      float    freq         = babyMelody[n].freq;
+      uint32_t durMs        = babyMelody[n].durMs;
+      uint32_t totalSamples = (SAMPLE_RATE * durMs) / 1000;
+      uint32_t produced     = 0;
+      float    phase        = 0.0f;
+      float    phaseInc     = (freq > 0.0f)
+                              ? (2.0f * M_PI * freq / (float)SAMPLE_RATE)
+                              : 0.0f;
+      const uint32_t NOTE_FADE = 160;
+
+      while (produced < totalSamples && !babyTuneStop) {
+        uint32_t chunk = totalSamples - produced;
+        if (chunk > BABY_CHUNK_MONO_SAMPLES) chunk = BABY_CHUNK_MONO_SAMPLES;
+
+        for (uint32_t i = 0; i < chunk; i++) {
+          int16_t sample = 0;
+          if (freq > 0.0f) {
+            float v = sinf(phase) * BABY_TUNE_AMPLITUDE;
+            phase += phaseInc;
+            if (phase > 2.0f * M_PI) phase -= 2.0f * M_PI;
+            uint32_t pos  = produced + i;
+            uint32_t left = totalSamples - pos;
+            if (pos  < NOTE_FADE) v *= (float)pos  / (float)NOTE_FADE;
+            if (left < NOTE_FADE) v *= (float)left / (float)NOTE_FADE;
+            sample = (int16_t)v;
+          }
+          monoBuf[i] = sample;
+        }
+
+        for (uint32_t i = 0; i < chunk; i++) {
+          stereoBuf[i * 2]     = monoBuf[i];
+          stereoBuf[i * 2 + 1] = monoBuf[i];
+        }
+
+        size_t written = 0;
+        i2s_write(I2S_NUM_1, stereoBuf, chunk * 2 * sizeof(int16_t),
+                  &written, pdMS_TO_TICKS(50));
+        produced += chunk;
+        if (babyTuneStop) break;
       }
     }
-    Serial.printf("[RX] WAV header %u bytes\n", dataOffset);
-  } else {
-    // No header — raw PCM
-    Serial.println("[RX] No WAV header — treating as raw PCM");
   }
 
-  if (dataOffset >= rxBufUsed) {
-    bleSendRaw("ERROR:No PCM data after header\n");
-    return;
-  }
+  i2s_zero_dma_buffer(I2S_NUM_1);
+  Serial.println("[TUNE] Baby tune task exited");
+  babyTuneTaskHandle = nullptr;
+  babyTunePlaying    = false;
+  vTaskDelete(NULL);
+}
 
-  uint32_t pcmBytes = rxBufUsed - dataOffset;
-  bleSend("STATUS:Playing "+fname+" ("+String(pcmBytes/(SAMPLE_RATE*2.0f),1)+"s)\n");
-  playPCM((int16_t*)(rxBuffer + dataOffset), pcmBytes);
-  bleSend("PLAYED:"+fname+"\n");
-  Serial.println("[SPK] Ready for next recording");
-  // LED already off from playPCM — system is fully idle, button ready
+void startBabyTune() {
+  if (babyTunePlaying || babyTuneTaskHandle != nullptr) return;
+  initSpeaker();
+  babyTuneStop    = false;
+  babyTunePlaying = true;
+  BaseType_t ok = xTaskCreatePinnedToCore(
+    babyTuneTask, "BabyTune", 4096, NULL, 4, &babyTuneTaskHandle, 1);
+  if (ok != pdPASS) {
+    Serial.println("[TUNE] FATAL: cannot create tune task");
+    babyTunePlaying    = false;
+    babyTuneTaskHandle = nullptr;
+  }
+  Serial.println("[TUNE] Lullaby started");
+}
+
+void stopBabyTune() {
+  if (!babyTunePlaying && babyTuneTaskHandle == nullptr) return;
+  babyTuneStop = true;
+  uint32_t startWait = millis();
+  while (babyTunePlaying && (millis() - startWait) < 200)
+    vTaskDelay(pdMS_TO_TICKS(5));
+  if (babyTunePlaying) {
+    Serial.println("[TUNE] WARNING: task didn't exit within 200ms");
+    babyTunePlaying = false;
+  }
 }
 
 // ============================================================
-//  LISTEN MODE
+//  PROCESS RECEIVED AUDIO (LISTENING mode — WAV in rxBuffer)
 // ============================================================
-// Called ONCE in setup — allocates receive buffer from PSRAM
-// Buffer is reused for every subsequent receive session
+void processReceivedAudio(const String& fname) {
+  if (rxBufUsed == 0) { tcpSendRaw("ERROR:Empty receive buffer\n"); return; }
+  Serial.printf("[RX] Processing %u bytes\n", rxBufUsed);
+
+  uint32_t dataOffset = 0;
+  if (rxBufUsed >= 4 &&
+      rxBuffer[0]=='R' && rxBuffer[1]=='I' &&
+      rxBuffer[2]=='F' && rxBuffer[3]=='F') {
+    dataOffset = 44;
+    for (uint32_t i = 12; i < min(rxBufUsed, (uint32_t)256) - 4; i++) {
+      if (rxBuffer[i]=='d' && rxBuffer[i+1]=='a' &&
+          rxBuffer[i+2]=='t' && rxBuffer[i+3]=='a') {
+        dataOffset = i + 8; break;
+      }
+    }
+  }
+
+  if (dataOffset >= rxBufUsed) { tcpSendRaw("ERROR:No PCM data after header\n"); return; }
+
+  uint32_t pcmBytes = rxBufUsed - dataOffset;
+  tcpSend("STATUS:Playing "+fname+" ("+String(pcmBytes/(SAMPLE_RATE*2.0f),1)+"s)\n");
+  playPCM((int16_t*)(rxBuffer + dataOffset), pcmBytes);
+  tcpSend("PLAYED:"+fname+"\n");
+  Serial.println("[SPK] Ready for next recording");
+}
+
+// ============================================================
+//  RX BUFFER — allocated once from PSRAM at startup
+// ============================================================
 void allocateRxBuffer() {
-  if (rxBuffer != nullptr) return;  // already allocated
-  // Try PSRAM first (requires Tools → PSRAM → OPI PSRAM in Arduino IDE)
+  if (rxBuffer != nullptr) return;
   rxBuffer = (uint8_t*)heap_caps_malloc(RX_BUF_MAX, MALLOC_CAP_SPIRAM);
   if (rxBuffer) {
     rxBufSize = RX_BUF_MAX;
-    Serial.printf("[RX] PSRAM buffer allocated: %uKB\n", RX_BUF_MAX / 1024);
+    Serial.printf("[RX] PSRAM buffer: %uKB\n", RX_BUF_MAX / 1024);
     return;
   }
-  // PSRAM not available — use heap with safe headroom
   uint32_t freeHeap = heap_caps_get_free_size(MALLOC_CAP_8BIT);
   uint32_t useSize  = (freeHeap > 120*1024) ? (freeHeap - 100*1024) : 0;
   if (useSize >= 32*1024) {
     rxBuffer  = (uint8_t*)malloc(useSize);
     rxBufSize = useSize;
-    Serial.printf("[RX] Heap buffer allocated: %uKB (PSRAM unavailable)\n", useSize/1024);
+    Serial.printf("[RX] Heap buffer: %uKB\n", useSize/1024);
   } else {
-    Serial.printf("[RX] FATAL: Cannot allocate buffer — free heap: %uKB\n", freeHeap/1024);
-    Serial.println("[RX] Enable PSRAM: Tools → PSRAM → OPI PSRAM");
+    Serial.println("[RX] FATAL: Cannot allocate buffer — enable PSRAM");
   }
 }
 
-
-// ── v10: prebuffer is now the ring buffer threshold, not a static array ──
-
 // ============================================================
-//  v15: writeChunkToLittleFS — called from BLE onWrite()
-//  Appends raw bytes to the open Opus receive file.
-//  Chunks are raw BLE data — Opus packets with length prefixes.
-//  No parsing here — playOpusFromLittleFS handles that.
+//  WRITE OPUS CHUNK TO LITTLEFS (called from TCP handler)
 // ============================================================
 void writeChunkToLittleFS(const uint8_t* data, size_t len) {
   rxChunkCount++;
+  // Stop the lullaby on the very first Gemini chunk
+  if (rxChunkCount == 1 && babyTunePlaying) {
+    Serial.println("[TUNE] First Gemini chunk — signalling tune stop");
+    babyTuneStop = true;
+  }
   if (!ttsRxOpen) {
     Serial.printf("[RX] Chunk %u dropped — file not open\n", rxChunkCount);
     return;
@@ -688,314 +677,439 @@ void writeChunkToLittleFS(const uint8_t* data, size_t len) {
   size_t written = ttsRxFile.write(data, len);
   ttsRxBytes += written;
   if (written != len) {
-    Serial.printf("[RX] Chunk %u — write error %u/%u bytes (flash full?)\n",
-                  rxChunkCount, written, len);
+    Serial.printf("[RX] Chunk %u — write error %u/%u bytes\n", rxChunkCount, written, len);
   } else {
     Serial.printf("[RX] Chunk %u — %u bytes → LittleFS (%u total)\n",
                   rxChunkCount, len, ttsRxBytes);
   }
 }
 
+// ============================================================
+//  STREAM PLAY TASK — Core 1
+//  Drains PSRAM ring buffer → I2S_NUM_1.
+//  Waits for lullaby task to exit (both share I2S_NUM_1).
+//  Thread-safe PLAYED: ack sent via cmdQueue.
+// ============================================================
+void streamPlayTask(void* param) {
+  Serial.println("[PLAY] streamPlayTask started — waiting for lullaby");
+
+  // Wait for babyTuneTask to release I2S_NUM_1
+  uint32_t waitStart = millis();
+  while (babyTunePlaying && (millis() - waitStart) < 500)
+    vTaskDelay(pdMS_TO_TICKS(5));
+  if (babyTunePlaying) {
+    babyTunePlaying    = false;
+    babyTuneTaskHandle = nullptr;
+  }
+  vTaskDelay(pdMS_TO_TICKS(30));  // let DMA drain
+
+  Serial.println("[PLAY] Ring buffer → I2S_NUM_1 playback");
+  ledYellow();
+
+  static int16_t playBuf[512 * 2];  // 512 stereo pairs per burst
+  uint32_t totalFrames = 0;
+
+  for (;;) {
+    uint32_t filled = streamRingWritePos - streamRingReadPos;
+
+    if (filled == 0) {
+      if (streamRingDone) break;        // DONE + empty = finished
+      vTaskDelay(pdMS_TO_TICKS(5));     // wait for more decoded frames
+      continue;
+    }
+
+    uint32_t take = (filled > 512) ? 512 : filled;
+    for (uint32_t i = 0; i < take; i++) {
+      uint32_t idx       = (streamRingReadPos & STREAM_RING_MASK) * 2;
+      playBuf[i * 2]     = streamRingBuf[idx];
+      playBuf[i * 2 + 1] = streamRingBuf[idx + 1];
+      streamRingReadPos++;
+    }
+
+    size_t written = 0;
+    i2s_write(I2S_NUM_1, playBuf, take * 2 * sizeof(int16_t),
+              &written, pdMS_TO_TICKS(200));
+    totalFrames += take;
+  }
+
+  // DMA flush: buf_count(8) × buf_len(512) × 2ch × 2B / (16000×4) ≈ 256ms + 100ms
+  vTaskDelay(pdMS_TO_TICKS(356));
+  i2s_zero_dma_buffer(I2S_NUM_1);
+  ledOff();
+
+  Serial.printf("[PLAY] Done — %u stereo frames\n", totalFrames);
+
+  // Bounce PLAYED: to wifiTask via queue — safe cross-core TCP send
+  char msg[CMD_MAX_LEN];
+  snprintf(msg, CMD_MAX_LEN, "__PLAYED:response.opus");
+  xQueueSend(cmdQueue, msg, pdMS_TO_TICKS(100));
+
+  streamPlayTaskHandle = nullptr;
+  streamPlayStarted    = false;
+  vTaskDelete(NULL);
+}
+
+// ============================================================
+//  WRITE OPUS CHUNK TO RING BUFFER (called from TCP handler, Core 0)
+//  Parses [uint16_t len LE][opus bytes] stream arriving in arbitrary
+//  TCP chunks, decodes each complete packet, writes stereo PCM to
+//  PSRAM ring buffer. Starts streamPlayTask after STREAM_PLAY_THRESHOLD
+//  stereo pairs are buffered (≈60ms pre-roll).
+// ============================================================
+void writeChunkToRingBuf(const uint8_t* data, size_t len) {
+  rxChunkCount++;
+  if (rxChunkCount == 1 && babyTunePlaying) {
+    Serial.println("[RING] First chunk — stopping tune");
+    babyTuneStop = true;
+  }
+
+  if (!streamRingBuf || !streamDec) {
+    Serial.printf("[RING] Drop %u bytes — ring not ready\n", len);
+    return;
+  }
+
+  size_t pos = 0;
+  while (pos < len) {
+
+    // ── Reassemble 2-byte little-endian length header ─────────
+    while (streamLenHave < 2 && pos < len)
+      streamLenBuf[streamLenHave++] = data[pos++];
+    if (streamLenHave < 2) break;
+
+    if (streamOpusExpected == 0) {
+      streamOpusExpected = (uint16_t)(streamLenBuf[0] | (streamLenBuf[1] << 8));
+      streamOpusReceived = 0;
+      if (streamOpusExpected == 0 || streamOpusExpected > sizeof(streamOpusPkt)) {
+        Serial.printf("[RING] Bad pktLen=%u — skip chunk\n", streamOpusExpected);
+        streamOpusExpected = 0;
+        streamLenHave      = 0;
+        break;
+      }
+    }
+
+    // ── Accumulate opus bytes for this packet ──────────────────
+    uint16_t need  = streamOpusExpected - streamOpusReceived;
+    uint16_t avail = (uint16_t)min((size_t)need, len - pos);
+    memcpy(streamOpusPkt + streamOpusReceived, data + pos, avail);
+    streamOpusReceived += avail;
+    pos += avail;
+
+    if (streamOpusReceived < streamOpusExpected) break;  // incomplete — wait
+
+    // ── Full packet: decode → ring buffer ─────────────────────
+    int16_t pcmMono[960];
+    int decoded = opus_decode(streamDec, streamOpusPkt, streamOpusExpected,
+                              pcmMono, 960, 0);
+    if (decoded <= 0) {
+      Serial.printf("[RING] Opus decode err %d\n", decoded);
+    } else {
+      uint32_t free = STREAM_RING_STEREO - 1 -
+                      (streamRingWritePos - streamRingReadPos);
+      if ((uint32_t)decoded <= free) {
+        for (int i = 0; i < decoded; i++) {
+          uint32_t idx           = (streamRingWritePos & STREAM_RING_MASK) * 2;
+          streamRingBuf[idx]     = pcmMono[i];
+          streamRingBuf[idx + 1] = pcmMono[i];
+          streamRingWritePos++;
+        }
+      } else {
+        Serial.printf("[RING] Overflow — %d frames dropped\n", decoded);
+      }
+
+      // Start play task once pre-roll threshold reached
+      uint32_t filled = streamRingWritePos - streamRingReadPos;
+      if (!streamPlayStarted && filled >= STREAM_PLAY_THRESHOLD) {
+        streamPlayStarted = true;
+        BaseType_t ok = xTaskCreatePinnedToCore(
+          streamPlayTask, "StreamPlay", 8192, NULL, 5,
+          &streamPlayTaskHandle, 1);
+        if (ok != pdPASS) {
+          Serial.println("[RING] FATAL: cannot create streamPlayTask");
+          streamPlayStarted = false;
+        } else {
+          Serial.printf("[RING] Play task started (%u frames buffered)\n", filled);
+        }
+      }
+    }
+
+    // Reset for next packet
+    streamOpusExpected = 0;
+    streamOpusReceived = 0;
+    streamLenHave      = 0;
+  }
+}
+
+// ============================================================
+//  STREAMING STATE — ENTER / EXIT
+// ============================================================
 void enterStreamPlayback() {
   initSpeaker();
   rxChunkCount = 0;
   rxState      = RxState::STREAMING;
   ledYellow();
 
-  // Delete any leftover file from previous session
-  if (LittleFS.exists(TTS_RX_PATH)) LittleFS.remove(TTS_RX_PATH);
+  // Allocate PSRAM ring buffer once — reused across turns
+  if (!streamRingBuf) {
+    streamRingBuf = (int16_t*)heap_caps_malloc(
+      STREAM_RING_STEREO * 2 * sizeof(int16_t), MALLOC_CAP_SPIRAM);
+    if (!streamRingBuf) {
+      Serial.println("[RING] FATAL: Cannot allocate PSRAM ring buffer");
+      tcpSendRaw("ERROR:Ring buffer alloc failed\n");
+      return;
+    }
+    Serial.printf("[RING] PSRAM ring buffer: %uKB\n",
+                  (STREAM_RING_STEREO * 2 * sizeof(int16_t)) / 1024);
+  }
 
-  // Open file for writing — chunks will append as they arrive
-  ttsRxFile = LittleFS.open(TTS_RX_PATH, FILE_WRITE);
-  if (!ttsRxFile) {
-    Serial.println("[RX] FATAL: Cannot open TTS receive file!");
-    bleSendRaw("ERROR:LittleFS write failed\n");
+  // Reset ring state for this turn
+  streamRingWritePos   = 0;
+  streamRingReadPos    = 0;
+  streamRingDone       = false;
+  streamPlayStarted    = false;
+  streamPlayTaskHandle = nullptr;
+
+  // Reset Opus reassembly state
+  streamOpusExpected = 0;
+  streamOpusReceived = 0;
+  streamLenHave      = 0;
+
+  // (Re-)create Opus decoder for this turn
+  if (streamDec) { opus_decoder_destroy(streamDec); streamDec = nullptr; }
+  int err = OPUS_OK;
+  streamDec = opus_decoder_create(SAMPLE_RATE, 1, &err);
+  if (!streamDec || err != OPUS_OK) {
+    Serial.printf("[RING] FATAL: Opus decoder create failed: %d\n", err);
+    tcpSendRaw("ERROR:Opus decoder init failed\n");
     return;
   }
-  ttsRxOpen  = true;
-  ttsRxBytes = 0;
-  Serial.printf("[RX] TTS receive file open: %s\n", TTS_RX_PATH);
-  Serial.printf("[FS] Flash %.1f%% used before receive\n",
-                100.0f * LittleFS.usedBytes() / LittleFS.totalBytes());
+
+  Serial.println("[RING] Ready — decode-on-receive streaming");
+  startBabyTune();
 }
 
 void exitStreamPlayback(const String& fname) {
-  // Close the receive file
-  if (ttsRxOpen) {
-    ttsRxFile.close();
-    ttsRxOpen = false;
-  }
-  rxState = RxState::COMMAND;
+  // Signal ring buffer complete — streamPlayTask drains and sends PLAYED
+  streamRingDone = true;
+  Serial.printf("[RING] DONE — %u chunks, %u stereo frames buffered\n",
+                rxChunkCount, streamRingWritePos - streamRingReadPos);
 
-  uint32_t fileSize = LittleFS.exists(TTS_RX_PATH) ?
-                      LittleFS.open(TTS_RX_PATH, "r").size() : 0;
-  Serial.printf("[RX] Receive complete — %u chunks, %u bytes on disk\n",
-                rxChunkCount, fileSize);
-  Serial.printf("[FS] Flash %.1f%% used after receive\n",
-                100.0f * LittleFS.usedBytes() / LittleFS.totalBytes());
-
-  if (fileSize == 0) {
-    bleSendRaw("ERROR:TTS file empty\n");
+  // Nothing decoded (Gemini returned no audio)
+  if (streamRingWritePos == 0) {
+    if (babyTunePlaying) stopBabyTune();
+    tcpSendRaw("ERROR:TTS returned no audio\n");
+    tcpSendRaw("STATUS:Ready\n");
     return;
   }
 
-  // Play from LittleFS — decode Opus, no race conditions
-  bleSendRaw("STATUS:Playing " + fname + "\n");
-  playOpusFromLittleFS(TTS_RX_PATH);
-
-  // Clean up temp file after playing
-  LittleFS.remove(TTS_RX_PATH);
-  Serial.println("[FS] TTS temp file deleted");
-
-  bleSendRaw("PLAYED:" + fname + "\n");
-  bleSendRaw("STATUS:Ready\n");
+  // Short response — below start threshold — create play task now
+  if (!streamPlayStarted) {
+    streamPlayStarted = true;
+    BaseType_t ok = xTaskCreatePinnedToCore(
+      streamPlayTask, "StreamPlay", 8192, NULL, 5,
+      &streamPlayTaskHandle, 1);
+    if (ok != pdPASS) {
+      Serial.println("[RING] FATAL: cannot start streamPlayTask at DONE");
+      streamPlayStarted = false;
+      if (babyTunePlaying) stopBabyTune();
+      tcpSendRaw("PLAYED:" + fname + "\n");
+      tcpSendRaw("STATUS:Ready\n");
+    }
+  }
+  // streamPlayTask sends PLAYED: via cmdQueue when drain is complete
 }
 
+// ============================================================
+//  LISTEN MODE (SENDALL flow — WAV buffered in RAM)
+// ============================================================
 void enterListenMode(bool notifyApp = true) {
-  // Buffer allocated once at startup — just reset the used counter
   if (rxBuffer == nullptr || rxBufSize == 0) {
-    Serial.println("[RX] ERROR: Buffer not allocated — call allocateRxBuffer() in setup");
-    bleSendRaw("ERROR:Buffer not ready\n");
-    return;
-  }
-  // Allocate buffer once — reused across sessions
-  if (rxBuffer == nullptr) {
-    // Try PSRAM first, then regular heap
-    rxBuffer = (uint8_t*)heap_caps_malloc(RX_BUF_MAX,
-                           MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!rxBuffer) rxBuffer = (uint8_t*)malloc(RX_BUF_MAX);
-    if (!rxBuffer) {
-      Serial.println("[RX] Cannot allocate buffer!");
-      bleSendRaw("ERROR:Not enough RAM\n");
-      return;
-    }
-    rxBufSize = RX_BUF_MAX;
-    Serial.printf("[RX] Buffer: %uKB\n", rxBufSize / 1024);
+    tcpSendRaw("ERROR:Buffer not ready\n"); return;
   }
   rxBufUsed = 0;
-  rxState   = RxState::LISTENING;   // set state FIRST before notifying app
+  rxState   = RxState::LISTENING;
   ledYellow();
   Serial.println("[RX] LISTENING — send WAV chunks then DONE:filename.wav");
-  delay(20);  // ensure state is committed before app receives signal
-  if (notifyApp) bleSend("LISTENING\n");
-  else bleSend("READY_FOR_RESPONSE\n");  // app must wait for this before sending chunks
+  delay(20);
+  if (notifyApp) tcpSend("LISTENING\n");
+  else           tcpSend("READY_FOR_RESPONSE\n");
 }
 
 void exitListenMode() {
-  rxState   = RxState::COMMAND;
-  // DO NOT reset rxBufUsed here — processReceivedAudio still needs it
-  // rxBufUsed is reset at the START of next enterListenMode call
+  rxState = RxState::COMMAND;
   ledOff();
 }
 
 // ============================================================
-//  BLE CALLBACKS — NimBLE 2.x
+//  TCP INCOMING DATA HANDLER
+//  Called from wifiTask whenever tcpClient.available() > 0.
+//  Replaces BLE onWrite() callback. Same routing logic.
 // ============================================================
-class ServerCallbacks : public NimBLEServerCallbacks {
-  void onConnect(NimBLEServer* s, NimBLEConnInfo& connInfo) override {
-    bleConnected = true;
-    rxState = RxState::COMMAND;
-    // Request MTU 512 — phone will negotiate down if needed
-    // Actual usable payload = negotiated MTU - 3 bytes ATT overhead
-    s->setDataLen(connInfo.getConnHandle(), 251);  // extended data length
-    NimBLEDevice::setMTU(512);
-    Serial.printf("[BLE] Connected — requesting MTU 512\n");
-    bleSendRaw("CONNECTED\n");
-  }
-  void onMTUChange(uint16_t MTU, NimBLEConnInfo& connInfo) override {
-    Serial.printf("[BLE] ✓ MTU negotiated: %u bytes (payload: %u bytes)\n", MTU, MTU-3);
-    if (MTU < 100) Serial.println("[BLE] WARNING: MTU still small — app must call requestMtu(512)");
-  }
-  void onDisconnect(NimBLEServer* s, NimBLEConnInfo& connInfo, int reason) override {
-    bleConnected = false;
-    rxState   = RxState::COMMAND;
-    rxBufUsed = 0;
-    Serial.println("[BLE] Disconnected");
-    NimBLEDevice::startAdvertising();
-  }
-};
+void handleTcpIncoming() {
+  while (tcpClient.available()) {
+    int avail = tcpClient.available();
+    if (avail <= 0) break;
 
-class RxCallbacks : public NimBLECharacteristicCallbacks {
-  void onWrite(NimBLECharacteristic* c, NimBLEConnInfo& connInfo) override {
-    if (!cmdQueue) return;
-    std::string val = c->getValue();
-    size_t len = val.length();
-    if (len == 0) return;
-    const uint8_t* raw = (const uint8_t*)val.data();
+    int toRead = min(avail, (int)TCP_RX_BUF_SIZE);
+    int len    = tcpClient.readBytes(tcpRxStageBuf, toRead);
+    if (len <= 0) break;
 
-    // v10 DEBUG: log every packet that enters onWrite — state + size + first bytes
-    // Remove this block once audio is confirmed working
-    {
-      int st = (rxState == RxState::STREAMING) ? 2 :
-               (rxState == RxState::LISTENING)  ? 1 : 0;
-      if (len <= 32) {
-        char preview[48] = {};
-        memcpy(preview, raw, min(len, (size_t)47));
-        Serial.printf("[DBG] onWrite len=%u state=%d txt='%s'\n",
-                      len, st, preview);
-      } else {
-        Serial.printf("[DBG] onWrite len=%u state=%d hex=%02X%02X%02X%02X\n",
-                      len, st, raw[0], raw[1], raw[2], raw[3]);
-      }
-    }
+    const uint8_t* raw = tcpRxStageBuf;
 
-    // Drop pure-whitespace short packets
-    if (len <= 4) {
-      bool empty = true;
-      for (size_t i = 0; i < len; i++)
-        if (raw[i] > 32) { empty = false; break; }
-      if (empty) return;
-    }
-
-    // ── STREAMING mode ────────────────────────────────────────
-    // CRITICAL BUG FIX: exitStreamPlayback() calls vTaskDelay() which
-    // must NOT be called from the BLE onWrite() callback thread —
-    // doing so blocks the BLE stack and causes instant silent exit.
-    // Fix: route DONE through cmdQueue → bleTask() handles it safely.
+    // ── STREAMING mode: Opus chunks + DONE ───────────────────
     if (rxState == RxState::STREAMING) {
       bool isDone = (len >= 5 && len < 64 &&
-                     raw[0]==68 && raw[1]==79 && raw[2]==78 && raw[3]==69 &&
-                     (raw[4]==58 || raw[4]==10 || raw[4]==13 || raw[4]==32));
+                     raw[0]=='D' && raw[1]=='O' && raw[2]=='N' && raw[3]=='E' &&
+                     (raw[4]==':' || raw[4]=='\n' || raw[4]=='\r'));
       if (isDone) {
-        String fname = "response.wav";
-        if (raw[4]==58 && len > 5) {
+        String fname = "response.opus";
+        if (raw[4]==':' && len > 5) {
           fname = String((const char*)raw + 5, len - 5);
           fname.trim();
         }
-        rxState = RxState::COMMAND;   // stop accepting chunks immediately
+        rxState = RxState::COMMAND;
         char buf[CMD_MAX_LEN];
         snprintf(buf, CMD_MAX_LEN, "__DONE:%s", fname.c_str());
-        xQueueSend(cmdQueue, buf, 0); // bleTask() will call exitStreamPlayback()
-        return;
+        xQueueSend(cmdQueue, buf, 0);
+        Serial.printf("[TCP] DONE queued — fname=%s\n", fname.c_str());
+      } else {
+        writeChunkToRingBuf(raw, len);
       }
-      writeChunkToLittleFS(raw, len);  // v13: write to LittleFS, never blocks
       return;
     }
 
-    // ── LISTENING mode — buffer then play (SENDALL flow) ─────
+    // ── LISTENING mode: WAV bytes buffered in RAM ─────────────
     if (rxState == RxState::LISTENING) {
       bool isDone = (len >= 5 && len < 64 &&
-                     raw[0]==68 && raw[1]==79 && raw[2]==78 && raw[3]==69 &&
-                     (raw[4]==58 || raw[4]==10 || raw[4]==13 || raw[4]==32));
+                     raw[0]=='D' && raw[1]=='O' && raw[2]=='N' && raw[3]=='E' &&
+                     (raw[4]==':' || raw[4]=='\n' || raw[4]=='\r'));
       if (isDone) {
         String fname = "response.wav";
-        if (raw[4]==58 && len > 5) {
+        if (raw[4]==':' && len > 5) {
           fname = String((const char*)raw + 5, len - 5);
           fname.trim();
         }
-        Serial.printf("[RX] DONE -- %u bytes received\n", rxBufUsed);
+        Serial.printf("[RX] DONE — %u bytes received\n", rxBufUsed);
         exitListenMode();
         char buf[CMD_MAX_LEN];
         snprintf(buf, CMD_MAX_LEN, "__PLAY:%s", fname.c_str());
         xQueueSend(cmdQueue, buf, 0);
-        return;
-      }
-      if (rxBuffer && rxBufUsed + len <= rxBufSize) {
-        memcpy(rxBuffer + rxBufUsed, raw, len);
-        rxBufUsed += len;
       } else {
-        Serial.printf("[RX] Buffer full! %u/%u\n", rxBufUsed, rxBufSize);
-        bleSendRaw("ERROR:Buffer full\n");
-        exitListenMode();
+        if (rxBuffer && rxBufUsed + len <= rxBufSize) {
+          memcpy(rxBuffer + rxBufUsed, raw, len);
+          rxBufUsed += len;
+        } else {
+          Serial.printf("[RX] Buffer full! %u/%u\n", rxBufUsed, rxBufSize);
+          tcpSendRaw("ERROR:Buffer full\n");
+          exitListenMode();
+        }
       }
       return;
     }
 
-    // ── COMMAND mode ─────────────────────────────────────────
-    // ACK for file transfer flow control
-    if (len <= 5) {
-      String s((const char*)raw, len); s.trim();
-      if (s.equalsIgnoreCase("ACK")) {
-        if (ackSemaphore) xSemaphoreGiveFromISR(ackSemaphore, nullptr);
-        return;
-      }
-    }
-
-    // v13: In COMMAND mode, large binary packets are unexpected.
-    // Log and drop — don't try to parse as text command.
+    // ── COMMAND mode: text commands ───────────────────────────
+    // Drop large binary blobs in command mode
     if (len >= 100) {
-      bool looksLikePCM = true;
-      for (size_t i = 0; i < min(len, (size_t)8); i++)
-        if (raw[i] >= 32 && raw[i] < 127) { looksLikePCM = false; break; }
-      if (looksLikePCM) {
-        Serial.printf("[RX] WARNING: %u-byte binary chunk in COMMAND mode — dropped\n", len);
+      bool looksLikeBinary = true;
+      for (int i = 0; i < min(len, 8); i++)
+        if (raw[i] >= 32 && raw[i] < 127) { looksLikeBinary = false; break; }
+      if (looksLikeBinary) {
+        Serial.printf("[TCP] WARNING: %d-byte binary in COMMAND mode — dropped\n", len);
         return;
       }
     }
 
-    // Parse as text command
     char buf[CMD_MAX_LEN];
-    size_t copyLen = min(len, (size_t)(CMD_MAX_LEN - 1));
+    size_t copyLen = min(len, (int)(CMD_MAX_LEN - 1));
     memcpy(buf, raw, copyLen);
     buf[copyLen] = '\0';
+    // Strip trailing whitespace / newlines
     for (int i = (int)copyLen - 1; i >= 0; i--) {
-      if (buf[i]==10 || buf[i]==13 || buf[i]==32) buf[i]='\0';
+      if (buf[i]=='\n' || buf[i]=='\r' || buf[i]==' ') buf[i]='\0';
       else break;
     }
     if (strlen(buf) == 0) return;
     if (xQueueSend(cmdQueue, buf, 0) != pdTRUE)
-      Serial.println("[BLE] CMD queue full");
+      Serial.println("[TCP] CMD queue full");
     else
-      Serial.printf("[BLE] Queued: %s\n", buf);
+      Serial.printf("[TCP] Queued cmd: %s\n", buf);
   }
-};
-
-// ============================================================
-//  BLE INIT
-// ============================================================
-void initBLE() {
-  NimBLEDevice::init(BLE_DEVICE_NAME);
-  NimBLEDevice::setMTU(512);
-  NimBLEServer* pServer = NimBLEDevice::createServer();
-  pServer->setCallbacks(new ServerCallbacks());
-  NimBLEService* pSvc = pServer->createService(NUS_SERVICE_UUID);
-  pTxChar = pSvc->createCharacteristic(NUS_TX_UUID, NIMBLE_PROPERTY::NOTIFY);
-  NimBLECharacteristic* pRxChar = pSvc->createCharacteristic(
-    NUS_RX_UUID, NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR);
-  pRxChar->setCallbacks(new RxCallbacks());
-  pSvc->start();
-  NimBLEAdvertising* pAdv = NimBLEDevice::getAdvertising();
-  pAdv->addServiceUUID(NUS_SERVICE_UUID);
-  NimBLEAdvertisementData sr; sr.setName(BLE_DEVICE_NAME);
-  pAdv->setScanResponseData(sr);
-  NimBLEDevice::startAdvertising();
-  Serial.printf("[BLE] '%s' advertising\n", BLE_DEVICE_NAME);
 }
 
 // ============================================================
-//  FILE TRANSFER
+//  WIFI INIT
 // ============================================================
-void sendFileOverBLE(const char* path) {
-  if (!LittleFS.exists(path)) { bleSendRaw("ERROR:Not found\n"); return; }
+void initWiFi() {
+  Serial.printf("[WiFi] Connecting to '%s'", WIFI_SSID);
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(WIFI_SSID, WIFI_PASS);
+
+  uint32_t t = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - t < 15000) {
+    delay(300);
+    Serial.print(".");
+  }
+
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("\n[WiFi] FAILED — check SSID/password in sketch");
+    Serial.println("[WiFi] Device will retry on next boot");
+    // Non-fatal — continues without WiFi (records to LittleFS only)
+    return;
+  }
+
+  Serial.printf("\n[WiFi] Connected!\n");
+  Serial.printf("[WiFi] IP Address : %s\n", WiFi.localIP().toString().c_str());
+  Serial.printf("[WiFi] Signal     : %d dBm\n", WiFi.RSSI());
+  Serial.printf("[TCP]  Server     : %s:%d\n",
+                WiFi.localIP().toString().c_str(), TCP_PORT);
+  Serial.println("[TCP]  *** Use this IP in your app ***");
+
+  tcpServer.begin();
+  tcpServer.setNoDelay(true);   // disable Nagle for lower latency on small packets
+  Serial.printf("[TCP]  Server listening on port %d\n", TCP_PORT);
+}
+
+// ============================================================
+//  FILE TRANSFER — send one WAV file over TCP
+// ============================================================
+void sendFileOverTCP(const char* path) {
+  if (!LittleFS.exists(path)) { tcpSendRaw("ERROR:Not found\n"); return; }
   File f = LittleFS.open(path, "r");
-  if (!f) { bleSendRaw("ERROR:Cannot open\n"); return; }
+  if (!f) { tcpSendRaw("ERROR:Cannot open\n"); return; }
   uint32_t fileSize = f.size();
   String   fname    = String(path).substring(1);
-  ledBlue();  // BLUE = sending to app
-  bleSend("FILE:"+fname+":"+String(fileSize)+"\n");
-  Serial.printf("[BLE] Sending %s\n", path);
-  delay(100);
-  static uint8_t buf[BLE_CHUNK_SIZE];
+  ledBlue();
+  tcpSend("FILE:"+fname+":"+String(fileSize)+"\n");
+  Serial.printf("[TCP] Sending %s (%u bytes)\n", path, fileSize);
+  delay(50);   // give app time to prepare for incoming binary
+
+  static uint8_t buf[TCP_CHUNK_SIZE];
   uint32_t sent = 0, lastLog = 0;
+
   while (f.available()) {
-    if (!bleConnected) { f.close(); return; }
-    size_t got = f.read(buf, BLE_CHUNK_SIZE);
+    if (!wifiConnected || !tcpClient.connected()) { f.close(); ledOff(); return; }
+    size_t got = f.read(buf, TCP_CHUNK_SIZE);
     if (!got) break;
-    size_t actualSent = bleSendBinary(buf, got);
+    size_t actualSent = tcpSendBinary(buf, got);
     sent += actualSent;
-    if (!bleConnected) { f.close(); ledOff(); Serial.println("[BLE] Disconnected mid-transfer"); return; }
-    if (sent - lastLog >= 10240) { Serial.printf("[BLE] %u/%u\n",sent,fileSize); lastLog=sent; }
+    if (!wifiConnected) { f.close(); ledOff(); return; }
+    if (sent - lastLog >= 20480) {
+      Serial.printf("[TCP] %u/%u bytes\n", sent, fileSize);
+      lastLog = sent;
+    }
   }
   f.close();
-  delay(50); bleSend("END:"+fname+"\n");
-  delay(100); LittleFS.remove(path);
-  ledOff();  // done sending
-  bleSend("DELETED:"+fname+"\n");
-  Serial.printf("[BLE] Done+deleted: %s\n", path);
+
+  delay(30);
+  tcpSend("END:"+fname+"\n");
+  delay(50);
+  LittleFS.remove(path);
+  ledOff();
+  tcpSend("DELETED:"+fname+"\n");
+  Serial.printf("[TCP] Done + deleted: %s  sent=%u bytes\n", path, sent);
 }
 
 // ============================================================
-//  SEND ALL — enters LISTENING after every file is sent
+//  SEND ALL — sends every recording, then enters LISTEN mode
 // ============================================================
 void sendAllFiles() {
   String files[200]; int count = 0;
@@ -1009,48 +1123,45 @@ void sendAllFiles() {
     if (!LittleFS.exists(path) && i > (int)fileIndex + 20) break;
   }
   if (count == 0) {
-    bleSendRaw("STATUS:No recordings\n");
+    tcpSendRaw("STATUS:No recordings\n");
     delay(100);
-    enterListenMode();   // still enter listen even if no files
+    enterListenMode();
     return;
   }
-  bleSendRaw("STATUS:Sending "+String(count)+" file(s)\n");
+  tcpSendRaw("STATUS:Sending "+String(count)+" file(s)\n");
   for (int i = 0; i < count; i++) {
-    if (!bleConnected) return;
-    bleSendRaw("STATUS:File "+String(i+1)+" of "+String(count)+"\n");
-    delay(50);
-    sendFileOverBLE(files[i].c_str());
-    delay(200);
+    if (!wifiConnected) return;
+    tcpSendRaw("STATUS:File "+String(i+1)+" of "+String(count)+"\n");
+    delay(30);
+    sendFileOverTCP(files[i].c_str());
+    delay(100);
   }
-  if (!bleConnected) return;
+  if (!wifiConnected) return;
   fileIndex = findNextIndex();
-  bleSendRaw("STATUS:All files sent\n");
+  tcpSendRaw("STATUS:All files sent\n");
   delay(100);
-  enterListenMode();     // ← auto-listen ON after all files sent
+  enterListenMode();
 }
 
 // ============================================================
-//  COMMAND HANDLER
+//  COMMAND HANDLER — same commands as BLE version
 // ============================================================
-void handleBLECommand(const char* rawCmd) {
+void handleTCPCommand(const char* rawCmd) {
   String cmd = String(rawCmd); cmd.trim();
   String up  = cmd; up.toUpperCase();
   Serial.printf("[CMD] '%s'\n", cmd.c_str());
 
-  // Internal: playback trigger from RX callback
-  if (cmd.startsWith("__PLAY:")) {
-    processReceivedAudio(cmd.substring(7));
-    return;
-  }
-
-  // v10: DONE routed from onWrite() via queue — safe to call vTaskDelay here
-  if (cmd.startsWith("__DONE:")) {
-    exitStreamPlayback(cmd.substring(7));
+  if (cmd.startsWith("__PLAY:"))   { processReceivedAudio(cmd.substring(7)); return; }
+  if (cmd.startsWith("__DONE:"))   { exitStreamPlayback(cmd.substring(7));   return; }
+  if (cmd.startsWith("__PLAYED:")) {
+    // Bounced from streamPlayTask (Core 1 → Core 0) for thread-safe TCP send
+    tcpSendRaw("PLAYED:" + cmd.substring(9) + "\n");
+    tcpSendRaw("STATUS:Ready\n");
     return;
   }
 
   if (up == "LIST") {
-    bleSend("=== Recordings ===\n");
+    tcpSend("=== Recordings ===\n");
     int count = 0;
     for (int i = 0; i < 10000; i++) {
       char path[32]; snprintf(path, sizeof(path), "/rec_%04d.wav", i);
@@ -1058,84 +1169,115 @@ void handleBLECommand(const char* rawCmd) {
       File f = LittleFS.open(path, "r");
       if (f) {
         float secs = (f.size()-44)/(SAMPLE_RATE*2.0f);
-        bleSend(String(path+1)+"  "+String(secs,1)+"s  "+String(f.size()/1024)+"KB\n");
+        tcpSend(String(path+1)+"  "+String(secs,1)+"s  "+String(f.size()/1024)+"KB\n");
         f.close(); count++;
       }
     }
-    if (!count) bleSend("No recordings yet.\n");
-    bleSend("Flash: "+String((uint32_t)(LittleFS.usedBytes()/1024))+
+    if (!count) tcpSend("No recordings yet.\n");
+    tcpSend("Flash: "+String((uint32_t)(LittleFS.usedBytes()/1024))+
             "KB/"+String((uint32_t)(LittleFS.totalBytes()/1024))+"KB\n");
   }
   else if (up == "SENDALL") {
-    bleTransferring = true; sendAllFiles(); bleTransferring = false;
+    wifiTransferring = true; sendAllFiles(); wifiTransferring = false;
   }
   else if (up.startsWith("SEND:")) {
     String fname = cmd.substring(5); fname.trim();
     if (!fname.startsWith("/")) fname = "/"+fname;
-    bleTransferring = true; sendFileOverBLE(fname.c_str()); bleTransferring = false;
+    wifiTransferring = true; sendFileOverTCP(fname.c_str()); wifiTransferring = false;
   }
   else if (up == "STATUS") {
-    float pct = 100.0f*LittleFS.usedBytes()/LittleFS.totalBytes();
-    bleSend("Flash: "+String((uint32_t)(LittleFS.usedBytes()/1024))+
+    float pct = 100.0f * LittleFS.usedBytes() / LittleFS.totalBytes();
+    tcpSend("Flash: "+String((uint32_t)(LittleFS.usedBytes()/1024))+
             "KB/"+String((uint32_t)(LittleFS.totalBytes()/1024))+
             "KB ("+String(pct,1)+"%)\n");
-    bleSend(recording?"State: RECORDING\n":"State: IDLE\n");
-    bleSend(rxState==RxState::STREAMING?"RX: STREAMING\n":
-          rxState==RxState::LISTENING?"RX: LISTENING\n":"RX: COMMAND\n");
-    bleSend("RxBuf: "+String(rxBufUsed)+" bytes\n");
-    bleSend("Flash: "+String((uint32_t)(LittleFS.usedBytes()/1024))+
-            "KB/"+String((uint32_t)(LittleFS.totalBytes()/1024))+"KB\n");
+    tcpSend(recording ? "State: RECORDING\n" : "State: IDLE\n");
+    tcpSend(rxState==RxState::STREAMING ? "RX: STREAMING\n" :
+            rxState==RxState::LISTENING ? "RX: LISTENING\n" : "RX: COMMAND\n");
+    tcpSend("WiFi: "+WiFi.localIP().toString()+" RSSI="+String(WiFi.RSSI())+"dBm\n");
   }
-  else if (up == "ACK_ON") {
-    ackModeEnabled = true;
-    bleSendRaw("STATUS:ACK mode ON — send ACK after each chunk\n");
-    Serial.println("[BLE] ACK mode ON");
-  }
-  else if (up == "ACK_OFF") {
-    ackModeEnabled = false;
-    bleSendRaw("STATUS:ACK mode OFF — no ACK needed\n");
-    Serial.println("[BLE] ACK mode OFF");
+  else if (up == "STREAM_MODE") {
+    Serial.println("[CMD] STREAM_MODE");
+    enterStreamPlayback();
+    tcpSendRaw("READY_FOR_RESPONSE\n");
   }
   else if (up == "FORMAT") {
-    bleSend("STATUS:Formatting...\n");
+    tcpSend("STATUS:Formatting...\n");
     LittleFS.end(); bool ok = LittleFS.format(); LittleFS.begin(true);
     fileIndex = 0;
-    bleSend(ok?"STATUS:Done\n":"ERROR:Format failed\n");
-  }
-  // STREAM_MODE: switch into direct speaker-streaming state.
-  // Send this before sending WAV chunks to test playback without recording.
-  else if (up == "STREAM_MODE") {
-    Serial.println("[CMD] STREAM_MODE — send WAV chunks then DONE:filename.wav");
-    enterStreamPlayback();  // rxState=STREAMING, resets WAV header parser
-    bleSendRaw("READY_FOR_RESPONSE\n");
+    tcpSend(ok ? "STATUS:Done\n" : "ERROR:Format failed\n");
   }
   else if (up == "HELP") {
-    bleSend("LIST           - list files\n");
-    bleSend("SENDALL        - send all + listen for audio\n");
-    bleSend("SEND:filename  - send one file\n");
-    bleSend("STATUS         - state + flash\n");
-    bleSend("STREAM_MODE    - direct WAV to speaker test\n");
-    bleSend("ACK_ON         - enable ACK flow control (IoT app)\n");
-    bleSend("ACK_OFF        - disable ACK flow control (default)\n");
-    bleSend("FORMAT         - wipe all\n");
-    bleSend("After STREAM_MODE/SENDALL: chunks then DONE:name.wav\n");
+    tcpSend("LIST           - list files\n");
+    tcpSend("SENDALL        - send all + listen for audio\n");
+    tcpSend("SEND:filename  - send one file\n");
+    tcpSend("STATUS         - state + flash + WiFi info\n");
+    tcpSend("STREAM_MODE    - direct Opus to speaker test\n");
+    tcpSend("FORMAT         - wipe all\n");
+    tcpSend("After STREAM_MODE/SENDALL: send Opus chunks then DONE:name.opus\n");
   }
-  else bleSend("Unknown. Type HELP\n");
+  else {
+    tcpSend("Unknown command. Type HELP\n");
+  }
 }
 
 // ============================================================
-//  BLE TASK — Core 0
+//  WIFI TASK — Core 0
+//  Handles: client accept, disconnect detection, incoming data.
+//  Also processes commands from cmdQueue (was bleTask).
 // ============================================================
-void bleTask(void* param) {
+void wifiTask(void* param) {
   char buf[CMD_MAX_LEN];
+
   for (;;) {
-    if (xQueueReceive(cmdQueue, buf, pdMS_TO_TICKS(10)) == pdTRUE)
-      handleBLECommand(buf);
+    // ── 1. Accept new client ──────────────────────────────────
+    if (tcpServer.hasClient()) {
+      if (tcpClient && tcpClient.connected()) {
+        tcpClient.stop();  // drop old client
+        Serial.println("[TCP] Old client replaced");
+      }
+      tcpClient     = tcpServer.accept();
+      wifiConnected = true;
+      rxState       = RxState::COMMAND;
+      Serial.printf("[TCP] Client connected: %s\n",
+                    tcpClient.remoteIP().toString().c_str());
+      tcpSendRaw("CONNECTED\n");
+    }
+
+    // ── 2. Detect disconnection ───────────────────────────────
+    if (wifiConnected && (!tcpClient || !tcpClient.connected())) {
+      wifiConnected = false;
+      rxState       = RxState::COMMAND;
+      rxBufUsed     = 0;
+      if (babyTunePlaying) stopBabyTune();
+      Serial.println("[TCP] Client disconnected");
+    }
+
+    // ── 3. Handle incoming data ───────────────────────────────
+    if (wifiConnected && tcpClient.available()) {
+      handleTcpIncoming();
+    }
+
+    // ── 4. Process command queue (Opus DONE, PLAY, text cmds) ─
+    if (xQueueReceive(cmdQueue, buf, 0) == pdTRUE) {
+      handleTCPCommand(buf);
+    }
+
+    // ── 5. WiFi reconnect watchdog ────────────────────────────
+    static uint32_t lastWifiCheck = 0;
+    if (millis() - lastWifiCheck > 10000) {
+      lastWifiCheck = millis();
+      if (WiFi.status() != WL_CONNECTED) {
+        Serial.println("[WiFi] Reconnecting...");
+        WiFi.reconnect();
+      }
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(5));
   }
 }
 
 // ============================================================
-//  STORAGE
+//  STORAGE HELPERS
 // ============================================================
 void manageStorage(uint16_t skipIndex) {
   float ratio = (float)LittleFS.usedBytes()/(float)LittleFS.totalBytes();
@@ -1143,18 +1285,13 @@ void manageStorage(uint16_t skipIndex) {
   Serial.printf("[STORAGE] %.1f%% full\n", ratio*100.0f);
   uint16_t p1 = skipIndex;
   uint16_t p2 = skipIndex > 0 ? skipIndex-1 : 65535;
-  bool deleted = false;
   for (int i = 0; i < 10000; i++) {
     if ((uint16_t)i==p1||(uint16_t)i==p2) continue;
     char path[32]; snprintf(path,sizeof(path),"/rec_%04d.wav",i);
     if (!LittleFS.exists(path)) continue;
-    File chk=LittleFS.open(path,"r"); if(!chk) continue; chk.close();
-    if (LittleFS.remove(path)) {
-      Serial.printf("[STORAGE] Deleted %s\n",path);
-      deleted=true; return;
-    }
+    if (LittleFS.remove(path)) { Serial.printf("[STORAGE] Deleted %s\n",path); return; }
   }
-  if (!deleted) { LittleFS.end(); LittleFS.format(); LittleFS.begin(true); fileIndex=0; }
+  LittleFS.end(); LittleFS.format(); LittleFS.begin(true); fileIndex=0;
 }
 
 uint16_t findNextIndex() {
@@ -1168,7 +1305,7 @@ uint16_t findNextIndex() {
 }
 
 // ============================================================
-//  MICROPHONE — I2S_NUM_0
+//  MICROPHONE — I2S_NUM_0 (INMP441)
 // ============================================================
 void initMicrophone() {
   i2s_config_t cfg = {
@@ -1178,69 +1315,55 @@ void initMicrophone() {
     .channel_format       = I2S_CHANNEL_FMT_ONLY_LEFT,
     .communication_format = I2S_COMM_FORMAT_STAND_I2S,
     .intr_alloc_flags     = ESP_INTR_FLAG_LEVEL1,
-    .dma_buf_count        = 8, .dma_buf_len = I2S_BUF_LEN,
-    .use_apll = false, .tx_desc_auto_clear = false, .fixed_mclk = 0
+    .dma_buf_count        = 8,
+    .dma_buf_len          = I2S_BUF_LEN,
+    .use_apll             = false,
+    .tx_desc_auto_clear   = false,
+    .fixed_mclk           = 0
   };
   i2s_pin_config_t pins = {
-    .bck_io_num=MIC_SCK_PIN, .ws_io_num=MIC_WS_PIN,
-    .data_out_num=I2S_PIN_NO_CHANGE, .data_in_num=MIC_SD_PIN
+    .bck_io_num    = MIC_SCK_PIN,
+    .ws_io_num     = MIC_WS_PIN,
+    .data_out_num  = I2S_PIN_NO_CHANGE,
+    .data_in_num   = MIC_SD_PIN
   };
-  i2s_driver_install(I2S_NUM_0,&cfg,0,NULL);
-  i2s_set_pin(I2S_NUM_0,&pins);
-  // INMP441 needs ~100ms warmup after power-on before valid data
-  delay(100);
-  // Flush DMA buffers — discard first few reads which may be zeros
+  i2s_driver_install(I2S_NUM_0, &cfg, 0, NULL);
+  i2s_set_pin(I2S_NUM_0, &pins);
+  delay(100);  // INMP441 needs ~100ms warmup
   size_t dummy = 0;
   int32_t dummyBuf[I2S_BUF_LEN];
-  for(int i=0;i<5;i++) i2s_read(I2S_NUM_0,dummyBuf,sizeof(dummyBuf),&dummy,pdMS_TO_TICKS(50));
+  for (int i=0; i<5; i++) i2s_read(I2S_NUM_0,dummyBuf,sizeof(dummyBuf),&dummy,pdMS_TO_TICKS(50));
   i2s_zero_dma_buffer(I2S_NUM_0);
   Serial.println("[MIC] INMP441 ready on I2S_NUM_0");
 }
 
 // ============================================================
 //  WAV RECORD
+//  Hold BTN_PIN to record. Release to stop.
+//  If WiFi connected: streams live PCM to app + saves to LittleFS.
+//  If not connected:  saves to LittleFS only.
 // ============================================================
-void writeWavHeader(File& f){WavHeader h;f.write((uint8_t*)&h,sizeof(h));}
-void finalizeWavHeader(File& f,uint32_t d){
-  WavHeader h;h.dataSize=d;h.fileSize=d+sizeof(WavHeader)-8;
-  f.seek(0);f.write((uint8_t*)&h,sizeof(h));
+void writeWavHeader(File& f) { WavHeader h; f.write((uint8_t*)&h,sizeof(h)); }
+void finalizeWavHeader(File& f, uint32_t d) {
+  WavHeader h; h.dataSize=d; h.fileSize=d+sizeof(WavHeader)-8;
+  f.seek(0); f.write((uint8_t*)&h,sizeof(h));
 }
 
-// ── WAV header helper for streaming ──────────────────────────
-void sendWavHeaderBLE(uint32_t dataSize) {
-  WavHeader h;
-  h.dataSize = dataSize;
-  h.fileSize = dataSize + sizeof(WavHeader) - 8;
-  // Raw send — no ACK needed for streaming header
-  if (!bleConnected || !pTxChar) return;
-  pTxChar->setValue((uint8_t*)&h, sizeof(h));
-  pTxChar->notify();
-  delay(20);
-}
-
-// ── Main record function — streams live if BLE connected ──────
-// If BLE connected:  I2S → BLE chunks live (low latency streaming)
-//                    also saves to LittleFS as backup
-// If BLE disconnected: I2S → LittleFS only (classic store+forward)
 void recordWav(const char* path, uint16_t myIdx) {
   ledGreen();
   Serial.printf("[REC] %s — hold button\n", path);
-
   manageStorage(myIdx);
 
   File f = LittleFS.open(path, FILE_WRITE);
   if (!f) {
     Serial.printf("[ERROR] Cannot create %s\n", path);
-    Serial.println("[REC] Reformatting LittleFS...");
     LittleFS.end(); LittleFS.format(); LittleFS.begin(true); fileIndex = 0;
     f = LittleFS.open(path, FILE_WRITE);
     if (!f) { Serial.println("[ERROR] Still cannot create file"); ledOff(); return; }
-    Serial.println("[REC] Reformat OK");
   }
-
   writeWavHeader(f);
 
-  bool doStream = bleConnected;   // snapshot — don't change mid-recording
+  bool doStream  = wifiConnected;
   uint32_t dataBytes = 0;
   size_t   bytesRead = 0;
   bool     writeErr  = false;
@@ -1248,10 +1371,9 @@ void recordWav(const char* path, uint16_t myIdx) {
 
   if (doStream) {
     streaming = true;
-    // Send stream start signal + WAV header so app can start STT immediately
-    bleSendRaw("STREAM_START:" + String(path+1) + "\n");
-    sendWavHeaderBLE(0xFFFFFFFF);  // placeholder size — app ignores it for streaming
-    Serial.printf("[STREAM] Live streaming to app\n");
+    tcpSendRaw("STREAM_START:" + String(path+1) + "\n");
+    sendWavHeaderTCP(0xFFFFFFFF);
+    Serial.printf("[STREAM] Live streaming to app over TCP\n");
   }
 
   while (digitalRead(BTN_PIN) == LOW && !writeErr) {
@@ -1260,34 +1382,32 @@ void recordWav(const char* path, uint16_t myIdx) {
     if (err != ESP_OK || bytesRead == 0) continue;
     int got = bytesRead / 4;
 
-    // Diagnostic on first chunk
     if (firstChunk) {
       firstChunk = false;
       long long sq = 0;
       for (int i = 0; i < got; i++) sq += (long long)(gRawBuf[i]>>8)*(gRawBuf[i]>>8);
       int rms = (int)sqrt((double)sq / got);
-      Serial.printf("[MIC] First chunk: %d samples raw[0]=0x%08X RMS=%d\n",
-                    got, (uint32_t)gRawBuf[0], rms);
+      Serial.printf("[MIC] First chunk: %d samples RMS=%d\n", got, rms);
       if (rms == 0) Serial.println("[MIC] WARNING: All zeros — check mic wiring");
     }
 
     // Convert 32-bit I2S to 16-bit PCM
     for (int i = 0; i < got; i++) gPcmBuf[i] = (int16_t)(gRawBuf[i] >> 16);
 
-    // Stream chunk live to app — fire and forget, no ACK
-    // Real-time streaming does not retransmit dropped chunks
-    if (doStream && bleConnected) {
-      size_t pos = 0, total = got * 2;
+    // Stream chunk live to app — NO delay needed, TCP paces itself
+    if (doStream && wifiConnected && tcpClient.connected()) {
+      size_t pos   = 0;
+      size_t total = got * 2;
       const uint8_t* src = (const uint8_t*)gPcmBuf;
-      while (pos < total && bleConnected) {
-        size_t chunk = min((size_t)BLE_CHUNK_SIZE, total - pos);
-        pTxChar->setValue((uint8_t*)src + pos, chunk);
-        pTxChar->notify();
-        pos += chunk;
-        delay(10);  // 10ms — small gap, keeps BLE TX buffer clear
+      while (pos < total && wifiConnected && tcpClient.connected()) {
+        size_t chunk   = min((size_t)TCP_CHUNK_SIZE, total - pos);
+        size_t written = tcpClient.write(src + pos, chunk);
+        if (written == 0) break;
+        pos += written;
+        // ← NO delay(10) here — this is the biggest latency win vs BLE
       }
-      if (!bleConnected) {
-        Serial.println("[STREAM] BLE disconnected — saving to file only");
+      if (!wifiConnected || !tcpClient.connected()) {
+        Serial.println("[STREAM] TCP disconnected — saving to file only");
         doStream = false;
       }
     }
@@ -1303,16 +1423,14 @@ void recordWav(const char* path, uint16_t myIdx) {
   i2s_zero_dma_buffer(I2S_NUM_0);
 
   if (doStream) {
-    bleSendRaw("STREAM_END:" + String(path+1) + ":" + String(dataBytes) + "\n");
-    delay(50);  // give app time to process end signal
+    tcpSendRaw("STREAM_END:" + String(path+1) + ":" + String(dataBytes) + "\n");
+    delay(30);
     streaming = false;
     Serial.printf("[STREAM] Done — %uB streamed\n", dataBytes);
-    // Enter STREAMING state — onWrite() routes incoming chunks to LittleFS.
-    // exitStreamPlayback() plays the file when DONE is received.
     rxState = RxState::STREAMING;
     enterStreamPlayback();
-    Serial.println("[RX] STREAMING — chunks will play directly on speaker");
-    bleSendRaw("READY_FOR_RESPONSE\n");  // signal app it can start sending TTS audio
+    Serial.println("[RX] STREAMING — waiting for Opus response");
+    tcpSendRaw("READY_FOR_RESPONSE\n");
   }
 
   ledOff();
@@ -1321,9 +1439,8 @@ void recordWav(const char* path, uint16_t myIdx) {
     LittleFS.remove(path);
     if (writeErr) {
       fileIndex--;
-      Serial.println("[REC] Auto-reformatting...");
       LittleFS.end(); LittleFS.format(); LittleFS.begin(true); fileIndex = 0;
-      if (bleConnected) bleSendRaw("STATUS:Flash reformatted\n");
+      if (wifiConnected) tcpSendRaw("STATUS:Flash reformatted\n");
     } else {
       Serial.println("[REC] Too short — discarded");
     }
@@ -1331,8 +1448,8 @@ void recordWav(const char* path, uint16_t myIdx) {
     Serial.printf("[DONE] %s  %uB  %.1fs  Flash:%.1f%%\n",
       path, dataBytes+44, dataBytes/(SAMPLE_RATE*2.0f),
       100.0f*LittleFS.usedBytes()/LittleFS.totalBytes());
-    if (bleConnected && !doStream)  // only send NEW: if we didn't stream
-      bleSendRaw("NEW:"+String(path+1)+":"+String(dataBytes+44)+"\n");
+    if (wifiConnected && !doStream)
+      tcpSendRaw("NEW:"+String(path+1)+":"+String(dataBytes+44)+"\n");
   }
 }
 
@@ -1343,54 +1460,44 @@ void setup() {
   Serial.begin(115200);
   delay(1000);
   Serial.println("\n============================================");
-  Serial.println("  INMP441 + MAX98357A + BLE UART  v15.0");
+  Serial.println("  INMP441 + MAX98357A + WiFi TCP  v1.0");
   Serial.println("============================================\n");
 
   pinMode(BTN_PIN, INPUT_PULLUP);
   delay(10);
-  Serial.printf("[BTN] GPIO%d initial state: %s (should be HIGH when not pressed)\n",
-    BTN_PIN, digitalRead(BTN_PIN) ? "HIGH" : "LOW");
+  Serial.printf("[BTN] GPIO%d state: %s\n", BTN_PIN,
+                digitalRead(BTN_PIN) ? "HIGH (not pressed)" : "LOW (pressed)");
   pinMode(LED_R_PIN, OUTPUT);
   pinMode(LED_G_PIN, OUTPUT);
   pinMode(LED_B_PIN, OUTPUT);
   ledOff();
 
-  cmdQueue=xQueueCreate(CMD_QUEUE_DEPTH,CMD_MAX_LEN);
-  if(!cmdQueue){Serial.println("[FATAL] Queue!");while(true)delay(1000);}
+  cmdQueue = xQueueCreate(CMD_QUEUE_DEPTH, CMD_MAX_LEN);
+  if (!cmdQueue) { Serial.println("[FATAL] Queue!"); while(true) delay(1000); }
 
-  ackSemaphore = xSemaphoreCreateBinary();
-  if(!ackSemaphore){Serial.println("[FATAL] ACK Semaphore!");while(true)delay(1000);}
-
-
-  if(!LittleFS.begin(true)){Serial.println("[FATAL] LittleFS!");while(true)delay(1000);}
-  // Sanity check — warn if partition is too small
-  if(LittleFS.totalBytes() < 500*1024){
-    Serial.printf("[WARN] LittleFS only %uKB! Go to:\n", LittleFS.totalBytes()/1024);
+  if (!LittleFS.begin(true)) { Serial.println("[FATAL] LittleFS!"); while(true) delay(1000); }
+  if (LittleFS.totalBytes() < 500*1024) {
+    Serial.printf("[WARN] LittleFS only %uKB!\n", LittleFS.totalBytes()/1024);
     Serial.println("[WARN] Tools → Partition Scheme → Huge APP (3MB No OTA/1MB SPIFFS)");
-    Serial.println("[WARN] Or use a custom partition with more SPIFFS/LittleFS space");
   }
   Serial.printf("[FS] %.1f%% (%uKB/%uKB)\n",
     100.0f*LittleFS.usedBytes()/LittleFS.totalBytes(),
-    LittleFS.usedBytes()/1024,LittleFS.totalBytes()/1024);
+    LittleFS.usedBytes()/1024, LittleFS.totalBytes()/1024);
 
-  fileIndex=findNextIndex();
-  Serial.printf("[FS] Index: %u\n",fileIndex);
+  fileIndex = findNextIndex();
+  Serial.printf("[FS] Index: %u\n", fileIndex);
 
-  delay(500);
-  initBLE();
-  delay(200);
+  allocateRxBuffer();
+
+  // Init WiFi — prints IP address to Serial
+  initWiFi();
+
   initMicrophone();
-
-  allocateRxBuffer();  // allocate once — reused for every receive session
-  xTaskCreatePinnedToCore(bleTask,"BLETask",20480,NULL,1,NULL,0);
-
-  // v13: init speaker I2S early so startup tone works
   initSpeaker();
-
-  // ── Startup tone — plays after all hardware is ready ─────
-  // Ascending C5→E5→G5 chime confirms speaker is working.
-  // Edit playStartupTone() to change notes/duration/volume.
   playStartupTone();
+
+  // Start WiFi task on Core 0 (handles TCP accept + data + commands)
+  xTaskCreatePinnedToCore(wifiTask, "WiFiTask", 20480, NULL, 1, NULL, 0);
 
   Serial.printf("[CFG] Delete@%.0f%%  BTN=GPIO%d\n", FLASH_FULL_RATIO*100, BTN_PIN);
   Serial.printf("[HW]  MIC SCK=%d WS=%d SD=%d | SPK BCLK=%d LRC=%d DIN=%d\n",
@@ -1400,33 +1507,30 @@ void setup() {
 
 // ============================================================
 //  LOOP — Core 1: Button + recording
-//  Hold BTN_PIN to record. Release to stop.
-//  Pauses during BLE transfer and LISTENING mode.
 // ============================================================
 void loop() {
-  // Serial debug commands
-  if(Serial.available()){
-    String cmd=Serial.readStringUntil('\n');cmd.trim();
-    char buf[CMD_MAX_LEN];cmd.toCharArray(buf,CMD_MAX_LEN);
-    xQueueSend(cmdQueue,buf,0);
+  // Serial debug commands (same as BLE version)
+  if (Serial.available()) {
+    String cmd = Serial.readStringUntil('\n'); cmd.trim();
+    char buf[CMD_MAX_LEN]; cmd.toCharArray(buf, CMD_MAX_LEN);
+    xQueueSend(cmdQueue, buf, 0);
   }
 
   // Pause recording during transfer or listen mode
-  if(bleTransferring||rxState==RxState::LISTENING||streaming){delay(10);return;}
+  if (wifiTransferring || rxState==RxState::LISTENING || streaming) {
+    delay(10); return;
+  }
 
   // Button check — LOW = pressed (internal pull-up)
-  // Uncomment next line to debug button wiring:
-  // Serial.printf("[BTN] state=%d\n", digitalRead(BTN_PIN));
-  if(digitalRead(BTN_PIN)==LOW && !recording){
-    recording=true;
-    char path[32];uint16_t myIdx=fileIndex++;
-    snprintf(path,sizeof(path),"/rec_%04d.wav",myIdx);
-    recordWav(path,myIdx);  // blocks until button released
-    recording=false;
-    // Small debounce — wait for clean release
-    while(digitalRead(BTN_PIN)==LOW) delay(10);
+  if (digitalRead(BTN_PIN)==LOW && !recording) {
+    recording = true;
+    char path[32]; uint16_t myIdx = fileIndex++;
+    snprintf(path, sizeof(path), "/rec_%04d.wav", myIdx);
+    recordWav(path, myIdx);
+    recording = false;
+    while (digitalRead(BTN_PIN)==LOW) delay(10);
     delay(50);
   }
 
-  delay(10);  // idle poll rate
+  delay(10);
 }

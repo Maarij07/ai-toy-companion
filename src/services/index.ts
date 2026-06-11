@@ -6,6 +6,12 @@ export { CartService } from './CartService';
 export { default as PaymentService } from './PaymentService';
 
 // Export voice processing services
+// WiFi TCP transport (replaces BLE)
+export { default as WiFiTCPService } from './WiFiTCPService';
+export { default as ESP32WiFiService } from './ESP32WiFiService';
+export type { ESP32WiFiMessage } from './ESP32WiFiService';
+export { default as Esp32DiscoveryService } from './Esp32DiscoveryService';
+// BLE services kept for reference (no longer used in production pipeline)
 export { default as BLEService } from './BLEService';
 export { default as ESP32Service } from './ESP32Service';
 export type { ESP32Message } from './ESP32Service';

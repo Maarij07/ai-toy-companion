@@ -34,11 +34,16 @@ function App() {
   const [currentScreen, setCurrentScreen] = useState<'login' | 'signup' | 'forgot' | 'onboarding' | 'setup' | 'home'>('login');
   
   useEffect(() => {
+    let isMounted = true;
+    let splashTimer: ReturnType<typeof setTimeout> | null = null;
+
     // Initialize app and check for existing session
     const initApp = async () => {
       // Show splash screen while initializing
-      const splashTimer = setTimeout(() => {
-        setShowSplash(false);
+      splashTimer = setTimeout(() => {
+        if (isMounted) {
+          setShowSplash(false);
+        }
       }, 3000);
       
       try {
@@ -46,34 +51,45 @@ function App() {
         // Check if AuthService is properly imported
         if (!AuthService || typeof AuthService.getSession !== 'function') {
           console.error('AuthService is not properly loaded. Using fallback behavior.');
-          setCurrentScreen('login');
-          setIsInitializing(false);
+          if (isMounted) {
+            setCurrentScreen('login');
+            setIsInitializing(false);
+          }
           return;
         }
         
         const { data: sessionData, error: sessionError } = await AuthService.getSession();
         
-        if (sessionData?.session && !sessionError) {
-          // User is already logged in
-          setCurrentScreen('home');
-        } else {
-          // No existing session, show login screen
-          setCurrentScreen('login');
+        if (isMounted) {
+          if (sessionData?.session && !sessionError) {
+            // User is already logged in
+            setCurrentScreen('home');
+          } else {
+            // No existing session, show login screen
+            setCurrentScreen('login');
+          }
         }
       } catch (error) {
         console.error('Error checking session:', error);
         // Default to login screen on error
-        setCurrentScreen('login');
+        if (isMounted) {
+          setCurrentScreen('login');
+        }
       } finally {
-        setIsInitializing(false);
+        if (isMounted) {
+          setIsInitializing(false);
+        }
       }
-      
-      return () => {
-        clearTimeout(splashTimer);
-      };
     };
     
     initApp();
+
+    return () => {
+      isMounted = false;
+      if (splashTimer) {
+        clearTimeout(splashTimer);
+      }
+    };
   }, []);
 
   const navigateToSignup = () => {

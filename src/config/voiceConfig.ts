@@ -1,10 +1,5 @@
-// BLE / NUS UUIDs are hardcoded inside ESP32Service — nothing to configure here.
-// Only AI-layer options are exposed.
-
 /**
  * Gemini Live prototype — set your Gemini API key here.
- * The key is used only on the device (direct WebSocket to Google).
- * For production this moves to a relay server so the key is never in the app.
  * Get a key at: https://aistudio.google.com/app/apikey
  */
 const GEMINI_LIVE_API_KEY = 'AIzaSyCueYKY9LYW94B7pn-I9UTjENZkBZcG8e8';
@@ -15,11 +10,28 @@ const GEMINI_LIVE_API_KEY = 'AIzaSyCueYKY9LYW94B7pn-I9UTjENZkBZcG8e8';
  */
 const USE_GEMINI_LIVE = true;
 
+/**
+ * ESP32 WiFi TCP config.
+ * ESP32_IP: ESP32 mDNS hostname or IP address.
+ *   e.g. "esp32audio.local" or "192.168.1.42"
+ * Both the phone and ESP32 must be on the same WiFi network (or phone hotspot).
+ */
+export const ESP32_IP   = 'esp32audio.local'; // ESP32 mDNS hostname
+export const ESP32_PORT = 8765;           // matches TCP_PORT in firmware
+// Firmware v2 advertises MDNS.addService("tcp", "tcp", ESP32_PORT),
+// which maps to DNS-SD service type "_tcp._tcp.".
+export const ESP32_NSD_SERVICE_TYPES = ['_tcp._tcp.', '_esp32audio._tcp.'];
+export const ESP32_FALLBACK_IPS = ['192.168.1.44']; // fallback when Android cannot resolve mDNS
+
 const voiceConfig = {
   whisperModelPath: process.env.WHISPER_MODEL_PATH || undefined,
   ttsLanguage: process.env.TTS_LANGUAGE || 'en-US',
   geminiApiKey: GEMINI_LIVE_API_KEY,
   useGeminiLive: USE_GEMINI_LIVE,
+  esp32Ip:   ESP32_IP,
+  esp32Port: ESP32_PORT,
+  esp32NsdServiceTypes: ESP32_NSD_SERVICE_TYPES,
+  esp32FallbackIps: ESP32_FALLBACK_IPS,
 };
 
 export default voiceConfig;
