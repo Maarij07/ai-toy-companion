@@ -380,9 +380,9 @@ class VoiceProcessingService {
         return { success: false, error: 'Gemini Live returned no audio' };
       }
 
-      // DONE: signal end of stream — firmware exits STREAMING mode and plays
-      await ESP32WiFiService.sendStreamDone('response.opus');
+      // End of stream — sentinel goes out immediately; firmware starts/finishes playback
       LatencyTrace.mark('done_sent');
+      await ESP32WiFiService.sendStreamDone('response.opus');
       console.log(`VPS|DONE sent — ${totalOpusBytes}B total opus, pipeline complete`);
 
       onStatus?.('idle');
@@ -687,8 +687,8 @@ class VoiceProcessingService {
         return { success: false, error: 'Gemini Live returned no audio' };
       }
 
-      await ESP32WiFiService.sendStreamDone('response.opus');
       LatencyTrace.mark('done_sent');
+      await ESP32WiFiService.sendStreamDone('response.opus');
       console.log(`VPS|DONE sent — ${totalOpusBytes}B total opus, live pipeline complete`);
 
       onStatus?.('idle');

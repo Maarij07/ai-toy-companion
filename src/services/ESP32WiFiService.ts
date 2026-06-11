@@ -529,14 +529,24 @@ class ESP32WiFiService {
   }
 
   /**
-   * Send DONE:filename after a 150ms gap to terminate a streamed Opus send.
-   * The gap prevents TCP coalescing from merging the last Opus bytes with DONE,
-   * which would cause the firmware to miss the DONE marker and hang in STREAMING mode.
+   * Terminate a streamed Opus send.
+   *
+   * Sends a zero-length packet (0x00 0x00) inside the existing
+   * [len][opus] framing — new firmware treats it as the end-of-stream
+   * sentinel immediately, with no coalescing ambiguity and no delay.
+   *
+   * The legacy DONE:filename text command follows after a 150ms gap for
+   * firmware that predates the sentinel (the gap prevents TCP coalescing
+   * from merging DONE with the last Opus bytes, which old firmware's
+   * byte-sniffing detection would miss). New firmware ignores the
+   * trailing DONE: line. Remove once all devices run sentinel firmware.
    */
   async sendStreamDone(filename: string): Promise<void> {
+    this.writeBinaryChunk(new Uint8Array([0x00, 0x00]));
+    console.log('ESP32WiFi: end-of-stream sentinel sent');
     await new Promise(r => setTimeout(r, 150));
     await this.writeCommand(`DONE:${filename}`);
-    console.log(`ESP32WiFi: DONE:${filename} sent`);
+    console.log(`ESP32WiFi: DONE:${filename} sent (legacy compat)`);
   }
 
   async requestFile(filename: string, timeoutMs = 30_000): Promise<ArrayBuffer> {

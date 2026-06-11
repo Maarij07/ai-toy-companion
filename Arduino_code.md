@@ -779,7 +779,22 @@ void writeChunkToRingBuf(const uint8_t* data, size_t len) {
     if (streamOpusExpected == 0) {
       streamOpusExpected = (uint16_t)(streamLenBuf[0] | (streamLenBuf[1] << 8));
       streamOpusReceived = 0;
-      if (streamOpusExpected == 0 || streamOpusExpected > sizeof(streamOpusPkt)) {
+
+      // ── Zero-length packet = end-of-stream sentinel ──────────
+      // In-band and unambiguous: replaces the text "DONE" detection,
+      // which broke whenever DONE coalesced with audio bytes in one
+      // TCP read or arrived split across two reads.
+      if (streamOpusExpected == 0) {
+        Serial.printf("[RING] End-of-stream sentinel after %u chunks\n", rxChunkCount);
+        streamLenHave = 0;
+        rxState       = RxState::COMMAND;
+        char dbuf[CMD_MAX_LEN];
+        snprintf(dbuf, CMD_MAX_LEN, "__DONE:response.opus");
+        xQueueSend(cmdQueue, dbuf, 0);
+        return;   // ignore anything after the sentinel in this read
+      }
+
+      if (streamOpusExpected > sizeof(streamOpusPkt)) {
         Serial.printf("[RING] Bad pktLen=%u — skip chunk\n", streamOpusExpected);
         streamOpusExpected = 0;
         streamLenHave      = 0;
@@ -1153,6 +1168,10 @@ void handleTCPCommand(const char* rawCmd) {
 
   if (cmd.startsWith("__PLAY:"))   { processReceivedAudio(cmd.substring(7)); return; }
   if (cmd.startsWith("__DONE:"))   { exitStreamPlayback(cmd.substring(7));   return; }
+  // Legacy DONE: line — apps still send it 150ms after the sentinel for
+  // old-firmware compatibility. The sentinel already ended the stream;
+  // ignore silently instead of replying "Unknown command".
+  if (cmd.startsWith("DONE:") || cmd.startsWith("done:")) { return; }
   if (cmd.startsWith("__PLAYED:")) {
     // Bounced from streamPlayTask (Core 1 → Core 0) for thread-safe TCP send
     tcpSendRaw("PLAYED:" + cmd.substring(9) + "\n");
