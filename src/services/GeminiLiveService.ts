@@ -26,6 +26,13 @@ const GEMINI_LIVE_WS_BASE =
 // How many PCM bytes per realtimeInput message (~125 ms of 16 kHz 16-bit audio)
 const STREAM_CHUNK_BYTES = 4000;
 
+// Push-to-talk turn boundaries: the button is the source of truth for when the
+// user is speaking, so Gemini's automatic VAD is disabled and the app sends
+// explicit activityStart/activityEnd signals. Required for live mic forwarding —
+// with auto VAD, a mid-sentence pause would trigger a premature response.
+// Set to false to fall back to auto VAD + audioStreamEnd (legacy behaviour).
+const EXPLICIT_ACTIVITY = true;
+
 // ── Debug log — circular buffer of last 40 entries, readable on-screen ────────
 const DEBUG_LOG: string[] = [];
 export function geminiDebugLog(): string[] { return [...DEBUG_LOG]; }
@@ -169,6 +176,11 @@ class GeminiLiveService {
             },
           },
         };
+        if (EXPLICIT_ACTIVITY) {
+          setupMsg.setup.realtimeInputConfig = {
+            automaticActivityDetection: { disabled: true },
+          };
+        }
         if (systemPrompt) {
           setupMsg.setup.systemInstruction = {
             parts: [{ text: systemPrompt }],
@@ -315,6 +327,21 @@ class GeminiLiveService {
   // ── Audio streaming ─────────────────────────────────────────────────────────
 
   /**
+   * Mark the start of the user's speech (button pressed). With explicit
+   * activity signaling, Gemini buffers everything streamed via streamPcm()
+   * until endUserTurn() sends activityEnd. No-op in legacy auto-VAD mode.
+   */
+  beginUserActivity(): void {
+    if (!EXPLICIT_ACTIVITY) return;
+    if (!this.ws || !this.ready) {
+      dbg('beginUserActivity: NOT CONNECTED — skipping');
+      return;
+    }
+    this.ws.send(JSON.stringify({ realtimeInput: { activityStart: {} } }));
+    dbg('beginUserActivity: activityStart sent');
+  }
+
+  /**
    * Stream raw 16-bit 16 kHz mono PCM to Gemini Live.
    * The entire PCM buffer is sliced into ~125 ms chunks and sent as
    * realtimeInput messages. Safe to call multiple times before endUserTurn().
@@ -385,11 +412,18 @@ class GeminiLiveService {
         reject(new Error('Gemini Live response timeout after ' + timeoutMs + ' ms'));
       }, timeoutMs);
 
-      // Signal end of audio stream — triggers model generation
-      dbg('endUserTurn: sending audioStreamEnd');
-      this.ws!.send(JSON.stringify({
-        realtimeInput: { audioStreamEnd: true },
-      }));
+      // Signal end of the user's speech — triggers model generation
+      if (EXPLICIT_ACTIVITY) {
+        dbg('endUserTurn: sending activityEnd');
+        this.ws!.send(JSON.stringify({
+          realtimeInput: { activityEnd: {} },
+        }));
+      } else {
+        dbg('endUserTurn: sending audioStreamEnd');
+        this.ws!.send(JSON.stringify({
+          realtimeInput: { audioStreamEnd: true },
+        }));
+      }
       LatencyTrace.mark('activity_end_sent');
       dbg('endUserTurn: waiting for turnComplete...');
     });

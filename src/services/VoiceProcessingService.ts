@@ -26,10 +26,27 @@ interface VoiceProcessingConfig {
 // Status emitted during pipeline execution so UI can update in real time
 export type PipelineStatus = 'transcribing' | 'thinking' | 'saving' | 'sending' | 'idle';
 
+// Per-turn state for the live mic-forwarding path (Gemini Live mode)
+interface LiveTurnState {
+  headerSkipped: number;          // bytes of the 44-byte WAV header consumed
+  pendingPcm: Uint8Array;         // coalesce small TCP chunks before forwarding
+  preconnectQueue: ArrayBuffer[]; // audio that arrived before the session was ready
+  forwarding: boolean;            // true once the session is ready and queue flushed
+  pcmBytes: number;
+  sumSq: number;
+  sampleCount: number;
+  connectPromise: Promise<void> | null;
+  connectError: Error | null;
+}
+
+// Forward to Gemini in ~125ms slices — matches streamPcm's wire chunking
+const LIVE_FORWARD_BYTES = 4000;
+
 class VoiceProcessingService {
   private config: VoiceProcessingConfig | null = null;
   private isInitialized: boolean = false;
   private readonly maxOpusResponseSeconds = 12;
+  private liveTurn: LiveTurnState | null = null;
 
   // ── WAV parser ─────────────────────────────────────────────────────────────
 
@@ -342,6 +359,7 @@ class VoiceProcessingService {
       };
 
       // ── Stream PCM to Gemini + wait for full turn (chunks delivered via onChunk) ─
+      GeminiLiveService.beginUserActivity();
       GeminiLiveService.streamPcm(pcmData);
       const { text: responseText } = await GeminiLiveService.endUserTurn(30_000, onChunk);
       console.log(`VPS|turnComplete — text="${responseText}" chunks=${sender.chunkCount}`);
@@ -504,6 +522,201 @@ class VoiceProcessingService {
     }
   }
 
+  // ── Live mic forwarding (Gemini Live mode) ────────────────────────────────
+  //
+  // The firmware streams mic PCM to the app in ~16ms chunks while the user is
+  // speaking (STREAM_START → chunks → STREAM_END). Instead of buffering the
+  // whole utterance and uploading it after button release, each chunk is
+  // forwarded to Gemini as it arrives — so Gemini has heard everything the
+  // moment the button is released and generation starts immediately.
+
+  private registerLiveAudioHandler(
+    onProcessingComplete: (success: boolean, error?: string) => void,
+    toyPersonality?: string,
+    onStatus?: (status: PipelineStatus) => void
+  ): void {
+    const personality =
+      toyPersonality ||
+      'You are a friendly AI toy companion for children. Respond warmly, in a child-friendly way. Keep every answer under 20 words.';
+
+    ESP32WiFiService.setLiveAudioHandler({
+      onStart: (filename) => {
+        console.log(`VPS|live stream start — ${filename}`);
+        const turn: LiveTurnState = {
+          headerSkipped: 0,
+          pendingPcm: new Uint8Array(0),
+          preconnectQueue: [],
+          forwarding: false,
+          pcmBytes: 0,
+          sumSq: 0,
+          sampleCount: 0,
+          connectPromise: null,
+          connectError: null,
+        };
+        this.liveTurn = turn;
+        // Session is warm after the first turn — this resolves immediately then
+        turn.connectPromise = GeminiLiveService.connect(personality)
+          .then(() => {
+            if (this.liveTurn !== turn) return; // turn was abandoned
+            GeminiLiveService.beginUserActivity();
+            for (const queued of turn.preconnectQueue) {
+              GeminiLiveService.streamPcm(queued);
+            }
+            turn.preconnectQueue = [];
+            turn.forwarding = true;
+          })
+          .catch((e) => {
+            turn.connectError = e instanceof Error ? e : new Error(String(e));
+            console.error('VPS|live connect failed:', turn.connectError.message);
+          });
+      },
+
+      onChunk: (data) => {
+        const turn = this.liveTurn;
+        if (!turn) return;
+
+        // Strip the 44-byte WAV header the firmware sends at stream start
+        let bytes = new Uint8Array(data);
+        if (turn.headerSkipped < 44) {
+          const skip = Math.min(44 - turn.headerSkipped, bytes.byteLength);
+          turn.headerSkipped += skip;
+          bytes = bytes.subarray(skip);
+          if (bytes.byteLength === 0) return;
+        }
+
+        // Energy tally for the end-of-turn silence guard
+        const evenLen = bytes.byteLength & ~1;
+        const samples = new Int16Array(bytes.buffer, bytes.byteOffset, evenLen / 2);
+        for (let i = 0; i < samples.length; i++) turn.sumSq += samples[i] * samples[i];
+        turn.sampleCount += samples.length;
+        turn.pcmBytes += bytes.byteLength;
+
+        // Coalesce small TCP reads into ~125ms slices before forwarding
+        const merged = new Uint8Array(turn.pendingPcm.byteLength + bytes.byteLength);
+        merged.set(turn.pendingPcm);
+        merged.set(bytes, turn.pendingPcm.byteLength);
+        turn.pendingPcm = merged;
+
+        while (turn.pendingPcm.byteLength >= LIVE_FORWARD_BYTES) {
+          const slice = turn.pendingPcm.slice(0, LIVE_FORWARD_BYTES);
+          turn.pendingPcm = turn.pendingPcm.slice(LIVE_FORWARD_BYTES);
+          this.forwardLivePcm(turn, slice.buffer as ArrayBuffer);
+        }
+      },
+
+      onEnd: (filename, dataBytes) => {
+        LatencyTrace.start(); // turn starts at button release
+        const turn = this.liveTurn;
+        this.liveTurn = null;
+        if (!turn) return;
+        console.log(`VPS|live stream end — ${filename} (${dataBytes}B reported)`);
+        this.processLiveTurn(turn, onStatus)
+          .then((result) => onProcessingComplete(result.success, result.error || undefined))
+          .catch((e) => onProcessingComplete(false, (e as Error).message));
+      },
+    });
+
+    console.log('VPS|live mic forwarding registered (Gemini Live mode)');
+  }
+
+  private forwardLivePcm(turn: LiveTurnState, pcm: ArrayBuffer): void {
+    if (turn.forwarding) {
+      GeminiLiveService.streamPcm(pcm);
+    } else {
+      turn.preconnectQueue.push(pcm);
+    }
+  }
+
+  /** Runs after STREAM_END: close the Gemini turn and stream the response out. */
+  private async processLiveTurn(
+    turn: LiveTurnState,
+    onStatus?: (status: PipelineStatus) => void
+  ): Promise<{ success: boolean; error: string }> {
+    try {
+      onStatus?.('thinking');
+
+      await turn.connectPromise;
+      if (turn.connectError) {
+        LatencyTrace.cancel('gemini_connect_failed');
+        await this.releaseFirmware();
+        onStatus?.('idle');
+        return { success: false, error: turn.connectError.message };
+      }
+
+      // Flush the sub-slice tail collected during speech
+      if (turn.pendingPcm.byteLength > 0) {
+        this.forwardLivePcm(turn, turn.pendingPcm.slice().buffer as ArrayBuffer);
+        turn.pendingPcm = new Uint8Array(0);
+      }
+
+      // Silence / accidental-press guard — same thresholds as the batch path
+      const durationMs = Math.round((turn.pcmBytes / 2 / 16000) * 1000);
+      const rms = Math.sqrt(turn.sumSq / (turn.sampleCount || 1));
+      console.log(`VPS|live turn — ${turn.pcmBytes}B = ${durationMs}ms, RMS=${rms.toFixed(0)}`);
+      if (durationMs < 500 || rms < 500) {
+        console.warn(`VPS|live turn REJECTED (${durationMs}ms, RMS=${rms.toFixed(0)})`);
+        LatencyTrace.cancel(durationMs < 500 ? 'too_short' : 'too_quiet');
+        // activityStart was already sent — drop the session so the next turn starts clean
+        GeminiLiveService.disconnect();
+        await this.releaseFirmware();
+        onStatus?.('idle');
+        return { success: false, error: durationMs < 500 ? 'empty_recording' : 'audio_too_quiet' };
+      }
+
+      // End the user turn; response chunks flow straight into the opus sender
+      const sender = this.createOpusSender(onStatus);
+      const { text: responseText } = await GeminiLiveService.endUserTurn(30_000, (pcm24) => {
+        sender.addPcm16(GeminiLiveService.downsample24to16(pcm24));
+      });
+      console.log(`VPS|turnComplete — text="${responseText}" chunks=${sender.chunkCount}`);
+
+      // Save chat (fire-and-forget — don't block audio delivery)
+      if (this.config?.toyId && responseText) {
+        Promise.all([
+          ChatService.saveMessage(this.config.toyId, 'user', '[Voice message]'),
+          ChatService.saveMessage(this.config.toyId, 'assistant', responseText),
+        ]).catch(e => console.warn('VPS|chat save failed:', e));
+      }
+
+      const { chunks, totalOpusBytes } = await sender.finish();
+      if (chunks === 0) {
+        console.warn('VPS|No audio returned from Gemini');
+        LatencyTrace.cancel('no_audio');
+        await this.releaseFirmware();
+        onStatus?.('idle');
+        return { success: false, error: 'Gemini Live returned no audio' };
+      }
+
+      await ESP32WiFiService.sendStreamDone('response.opus');
+      LatencyTrace.mark('done_sent');
+      console.log(`VPS|DONE sent — ${totalOpusBytes}B total opus, live pipeline complete`);
+
+      onStatus?.('idle');
+      return { success: true, error: '' };
+    } catch (error) {
+      console.error('VPS|live pipeline error:', error);
+      LatencyTrace.cancel('error');
+      await this.releaseFirmware();
+      onStatus?.('idle');
+      return { success: false, error: (error as Error).message };
+    }
+  }
+
+  /**
+   * The firmware enters STREAMING mode right after STREAM_END and waits for a
+   * response. On abort paths we must still send the end-of-stream signal —
+   * the firmware's zero-audio branch then returns it to Ready.
+   */
+  private async releaseFirmware(): Promise<void> {
+    try {
+      if (ESP32WiFiService.isConnected()) {
+        await ESP32WiFiService.sendStreamDone('response.opus');
+      }
+    } catch (e) {
+      console.warn('VPS|releaseFirmware failed:', e);
+    }
+  }
+
   // ── Listen for autonomous recordings pushed by ESP32 ─────────────────────
 
   /**
@@ -523,6 +736,13 @@ class VoiceProcessingService {
     if (!ESP32WiFiService.isConnected()) {
       console.error('VoiceProcessingService: ESP32 not connected');
       return;
+    }
+
+    // Gemini Live mode: forward the mic stream live instead of buffering it.
+    // The buffered autoReceive path below stays registered for the
+    // store-and-forward protocol (recordings made while the app was away).
+    if (this.config?.useGeminiLive) {
+      this.registerLiveAudioHandler(onProcessingComplete, toyPersonality, onStatus);
     }
 
     ESP32WiFiService.setAutoReceiveHandler(async (filename, audioData) => {
