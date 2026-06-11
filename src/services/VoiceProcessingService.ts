@@ -584,9 +584,13 @@ class VoiceProcessingService {
           if (bytes.byteLength === 0) return;
         }
 
-        // Energy tally for the end-of-turn silence guard
+        // Energy tally for the end-of-turn silence guard.
+        // Int16Array requires an even byteOffset — TCP can split the header
+        // at an odd boundary, so copy to a fresh buffer in that (rare) case.
         const evenLen = bytes.byteLength & ~1;
-        const samples = new Int16Array(bytes.buffer, bytes.byteOffset, evenLen / 2);
+        const samples = (bytes.byteOffset & 1) === 0
+          ? new Int16Array(bytes.buffer, bytes.byteOffset, evenLen / 2)
+          : new Int16Array(bytes.slice(0, evenLen).buffer, 0, evenLen / 2);
         for (let i = 0; i < samples.length; i++) turn.sumSq += samples[i] * samples[i];
         turn.sampleCount += samples.length;
         turn.pcmBytes += bytes.byteLength;
@@ -643,11 +647,25 @@ class VoiceProcessingService {
         return { success: false, error: turn.connectError.message };
       }
 
-      // Flush the sub-slice tail collected during speech
-      if (turn.pendingPcm.byteLength > 0) {
-        this.forwardLivePcm(turn, turn.pendingPcm.slice().buffer as ArrayBuffer);
-        turn.pendingPcm = new Uint8Array(0);
+      // Cold-connect catch-up: if the session became ready only after the
+      // button was released (first turn), the in-flight flush was skipped —
+      // send activityStart + the queued audio now, before closing the turn.
+      if (!turn.forwarding) {
+        GeminiLiveService.beginUserActivity();
+        for (const queued of turn.preconnectQueue) {
+          GeminiLiveService.streamPcm(queued);
+        }
+        turn.preconnectQueue = [];
+        turn.forwarding = true;
       }
+
+      // Flush the sub-slice tail collected during speech (trimmed to a whole
+      // sample — a trailing half-sample byte would break Int16 views downstream)
+      const tailLen = turn.pendingPcm.byteLength & ~1;
+      if (tailLen > 0) {
+        this.forwardLivePcm(turn, turn.pendingPcm.slice(0, tailLen).buffer as ArrayBuffer);
+      }
+      turn.pendingPcm = new Uint8Array(0);
 
       // Silence / accidental-press guard — same thresholds as the batch path
       const durationMs = Math.round((turn.pcmBytes / 2 / 16000) * 1000);

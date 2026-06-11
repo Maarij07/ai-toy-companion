@@ -351,8 +351,9 @@ class GeminiLiveService {
       dbg('streamPcm: NOT CONNECTED — skipping');
       return;
     }
-    // Calculate RMS to confirm real audio (not silence)
-    const samples = new Int16Array(pcm);
+    // Calculate RMS to confirm real audio (not silence).
+    // Guard the Int16 view against odd-length buffers (half a sample).
+    const samples = new Int16Array(pcm, 0, (pcm.byteLength & ~1) / 2);
     let sumSq = 0;
     for (let i = 0; i < samples.length; i++) sumSq += samples[i] * samples[i];
     const rms = Math.sqrt(sumSq / (samples.length || 1));
@@ -392,6 +393,13 @@ class GeminiLiveService {
       return Promise.reject(new Error('Gemini Live not connected'));
     }
 
+    // Legacy auto-VAD mode can start the response before endUserTurn is
+    // called — hand any already-buffered chunks to the streaming callback
+    // instead of discarding them at turnComplete.
+    if (onChunk && this.responseChunks.length > 0) {
+      dbg(`endUserTurn: delivering ${this.responseChunks.length} pre-buffered chunks to callback`);
+      for (const chunk of this.responseChunks) onChunk(chunk);
+    }
     this.responseChunks      = [];
     this.responseTextParts   = [];
     this.turnChunkCallback   = onChunk ?? null;
