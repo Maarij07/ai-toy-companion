@@ -5,6 +5,7 @@ import LLMService from './LLMService';
 import TTSService from './TTSService';
 import ChatService from './ChatService';
 import GeminiLiveService from './GeminiLiveService';
+import { OpusStreamSender } from './OpusStreamSender';
 import Esp32DiscoveryService from './Esp32DiscoveryService';
 import { supabaseUrl, supabaseAnonKey } from '../config/supabase';
 import { ESP32_FALLBACK_IPS, ESP32_NSD_SERVICE_TYPES } from '../config/voiceConfig';
@@ -260,6 +261,19 @@ class VoiceProcessingService {
     return opusBuffer;
   }
 
+  /** One sender per turn: encodes concurrently, sends to the ESP32 in order. */
+  private createOpusSender(onStatus?: (status: PipelineStatus) => void): OpusStreamSender {
+    return new OpusStreamSender({
+      encode: (pcm16) => this.encodePcmToOpus(pcm16),
+      send: (opus) => ESP32WiFiService.sendOpusChunk(opus),
+      isConnected: () => ESP32WiFiService.isConnected(),
+      onFirstChunkSent: () => {
+        LatencyTrace.mark('first_opus_sent');
+        onStatus?.('sending');
+      },
+    });
+  }
+
   private async processWithGeminiLive(
     audioData: ArrayBuffer,
     toyPersonality: string,
@@ -312,65 +326,25 @@ class VoiceProcessingService {
       await GeminiLiveService.connect(personality);
       console.log('VPS|Gemini session ready — streaming PCM');
 
-      // ── Streaming encode pipeline ─────────────────────────────────────────
+      // ── Streaming encode + send pipeline ──────────────────────────────────
       // As Gemini generates audio chunks we:
       //   1. Downsample 24→16 kHz immediately
-      //   2. Accumulate until 1s of PCM (32 KB) — Opus frame-aligned
-      //   3. Fire encode-opus HTTP call for that chunk (non-blocking — runs in background)
-      //   4. Collect all encode Promises; await + send them in order after turnComplete
+      //   2. OpusStreamSender encodes each chunk concurrently (encode of chunk N
+      //      overlaps generation of chunk N+1) and sends every chunk to the
+      //      ESP32, in order, the moment its encode resolves
       //
-      // This means encoding of chunk N overlaps with Gemini generating chunk N+1,
-      // so the ESP32 starts receiving Opus within ~1s of Gemini's first audio.
-
-      // 1 second of 16kHz 16-bit mono PCM, aligned to Opus frame boundary (320 samples = 640 bytes)
-      const OPUS_FRAME_BYTES    = 640;
-      const STREAM_CHUNK_BYTES  = Math.floor(32768 / OPUS_FRAME_BYTES) * OPUS_FRAME_BYTES; // 32640 B
-
-      let pendingPcm16  = new Uint8Array(0);
-      const encodeQueue: Array<Promise<ArrayBuffer>> = [];
-
-      const flushPending = (force = false) => {
-        const threshold = force ? OPUS_FRAME_BYTES : STREAM_CHUNK_BYTES;
-        while (pendingPcm16.byteLength >= threshold) {
-          const take = force
-            ? Math.floor(pendingPcm16.byteLength / OPUS_FRAME_BYTES) * OPUS_FRAME_BYTES
-            : STREAM_CHUNK_BYTES;
-          const chunk = pendingPcm16.slice(0, take);
-          pendingPcm16 = pendingPcm16.slice(take);
-          // Start HTTP encode call immediately — runs concurrently with next chunk collection
-          encodeQueue.push(this.encodePcmToOpus(chunk.buffer as ArrayBuffer));
-          console.log(`VPS|encode chunk ${encodeQueue.length} queued (${chunk.byteLength}B PCM)`);
-          if (force) break;
-        }
-      };
+      // Delivery starts while Gemini is still generating — the toy receives the
+      // first Opus chunk ~300ms after Gemini's first audio, not at turnComplete.
+      const sender = this.createOpusSender(onStatus);
 
       const onChunk = (pcm24: ArrayBuffer) => {
-        const pcm16 = GeminiLiveService.downsample24to16(pcm24);
-        const merged = new Uint8Array(pendingPcm16.byteLength + pcm16.byteLength);
-        merged.set(pendingPcm16);
-        merged.set(new Uint8Array(pcm16), pendingPcm16.byteLength);
-        pendingPcm16 = merged;
-        flushPending(false);
+        sender.addPcm16(GeminiLiveService.downsample24to16(pcm24));
       };
 
       // ── Stream PCM to Gemini + wait for full turn (chunks delivered via onChunk) ─
       GeminiLiveService.streamPcm(pcmData);
       const { text: responseText } = await GeminiLiveService.endUserTurn(30_000, onChunk);
-      console.log(`VPS|turnComplete — text="${responseText}" encodeQueue=${encodeQueue.length}`);
-
-      // Encode any remaining PCM that didn't fill a full chunk
-      flushPending(true);
-
-      if (encodeQueue.length === 0) {
-        console.warn('VPS|No audio returned from Gemini');
-        onStatus?.('idle');
-        return { success: false, error: 'Gemini Live returned no audio' };
-      }
-
-      if (!ESP32WiFiService.isConnected()) {
-        onStatus?.('idle');
-        return { success: false, error: 'ESP32 disconnected before response send' };
-      }
+      console.log(`VPS|turnComplete — text="${responseText}" chunks=${sender.chunkCount}`);
 
       // ── Save chat (fire-and-forget — don't block audio delivery) ─────────
       if (this.config?.toyId && responseText) {
@@ -380,24 +354,15 @@ class VoiceProcessingService {
         ]).catch(e => console.warn('VPS|chat save failed:', e));
       }
 
-      // ── Send encoded chunks to ESP32 in order as they finish ─────────────
-      // Encode calls are already running in parallel — most will be done by now.
-      onStatus?.('sending');
-      let totalOpusBytes = 0;
-      for (let i = 0; i < encodeQueue.length; i++) {
-        const opusChunk = await encodeQueue[i];
-        totalOpusBytes += opusChunk.byteLength;
-        if (!ESP32WiFiService.isConnected()) {
-          onStatus?.('idle');
-          return { success: false, error: 'ESP32 disconnected during send' };
-        }
-        ESP32WiFiService.sendOpusChunk(new Uint8Array(opusChunk));
-        console.log(`VPS|chunk ${i + 1}/${encodeQueue.length} sent (${opusChunk.byteLength}B opus)`);
-        // Tiny yield between chunks so the JS thread stays responsive
-        if (i < encodeQueue.length - 1) await new Promise(r => setTimeout(r, 5));
+      // ── Drain: encode/send of trailing chunks (most are already on the wire) ─
+      const { chunks, totalOpusBytes } = await sender.finish();
+      if (chunks === 0) {
+        console.warn('VPS|No audio returned from Gemini');
+        onStatus?.('idle');
+        return { success: false, error: 'Gemini Live returned no audio' };
       }
 
-      // DONE: 150ms gap then signal — firmware exits STREAMING mode and plays
+      // DONE: signal end of stream — firmware exits STREAMING mode and plays
       await ESP32WiFiService.sendStreamDone('response.opus');
       LatencyTrace.mark('done_sent');
       console.log(`VPS|DONE sent — ${totalOpusBytes}B total opus, pipeline complete`);
