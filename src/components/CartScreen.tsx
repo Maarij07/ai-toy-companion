@@ -5,9 +5,8 @@ import {
 } from 'react-native';
 
 // Supabase services
-import CartService from '../services/CartService';
+import { CartService } from '../services/CartService';
 import AuthService from '../services/AuthService';
-import PaymentService from '../services/PaymentService';
 import StripeCheckout from './StripeCheckout';
 import { Alert } from 'react-native';
 import { 
@@ -28,8 +27,6 @@ import {
   ModalHeader,
   ModalBody,
   ModalCloseButton,
-  ModalFooter,
-  Divider,
   Spinner
 } from '@gluestack-ui/themed';
 import { 

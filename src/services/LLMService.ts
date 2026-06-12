@@ -1,4 +1,4 @@
-import { supabase } from '../config/supabase';
+import { supabase, supabaseUrl, supabaseAnonKey } from '../config/supabase';
 
 interface LLMConfig {
   provider?: 'openai' | 'anthropic' | 'google' | 'custom';
@@ -44,17 +44,13 @@ class LLMService {
         return { response: '', success: false, error: 'User not authenticated' };
       }
 
-      // Get Supabase config from supabase client (no local env)
-      const supabaseUrl = supabase.supabaseUrl;
-      const supabaseKey = supabase.supabaseKey;
-      
       // Call the Supabase Edge Function for LLM processing (Gemini)
       const response = await fetch(`${supabaseUrl}/functions/v1/llm-processing`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`,
-          'apikey': supabaseKey,
+          'apikey': supabaseAnonKey,
         },
         body: JSON.stringify({
           prompt: inputText,
