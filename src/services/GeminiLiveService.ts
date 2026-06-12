@@ -17,7 +17,7 @@
  *
  * Note: relay/ is built and parked for production/school pilot phase.
  */
-import { supabaseUrl, supabaseAnonKey } from '../config/supabase';
+import { supabase, supabaseUrl, supabaseAnonKey } from '../config/supabase';
 import LatencyTrace from '../utils/LatencyTrace';
 
 const GEMINI_LIVE_WS_BASE =
@@ -98,13 +98,18 @@ class GeminiLiveService {
   private async fetchApiKey(): Promise<string> {
     if (this.cachedApiKey) return this.cachedApiKey;
 
+    const { data: { session } } = await supabase.auth.getSession();
+    const token = session?.access_token;
+    if (!token) {
+      throw new Error('Not authenticated — cannot fetch Gemini Live key');
+    }
 
     const res = await fetch(`${supabaseUrl}/functions/v1/gemini-key`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'apikey': supabaseAnonKey,
-        'Authorization': `Bearer ${supabaseAnonKey}`,
+        'Authorization': `Bearer ${token}`,
       },
     });
     if (!res.ok) {
@@ -190,7 +195,7 @@ class GeminiLiveService {
         dbg('connect: setup msg sent');
       };
 
-      ws.onmessage = (event: MessageEvent) => {
+      ws.onmessage = (event) => {
 
         const decodeAndHandle = (raw: string) => {
           const tryHandle = (parsed: any) => {
@@ -245,7 +250,7 @@ class GeminiLiveService {
         this.ws = null;
       };
 
-      ws.onclose = (event: CloseEvent) => {
+      ws.onclose = (event) => {
         console.log(`GeminiLiveService: closed (code=${event.code} reason=${event.reason})`);
         this.ready = false;
         // If closed before setupComplete arrived, reject connect() immediately

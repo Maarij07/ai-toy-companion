@@ -90,6 +90,26 @@ LAT|summary ...                  ← one line per turn, paste these
 
 In Stage 2 the child's perceived wait ≈ `first_opus_sent` + ~100ms.
 
+## Security changes bundled in this PR
+
+- **The hardcoded Gemini API key is removed from `voiceConfig.ts`** and the app
+  now fetches it via the `gemini-key` edge function using the signed-in user's
+  session token. ⚠️ **The old key is still in this repository's git history**
+  (commit `840b2ae`) — it must be treated as compromised: revoke it in Google
+  AI Studio / GCP, generate a replacement, and set it only as the
+  `GEMINI_LIVE_API_KEY` Supabase secret.
+- `gemini-key` and `encode-opus` now require a signed-in user via an explicit
+  `auth.getUser()` check. Note: `verify_jwt = true` alone is **not** an auth
+  gate — the public anon key is itself a valid JWT and passes it.
+- ⚠️ **Deploy pairing:** ship the edge-function changes and the app build from
+  this branch together. The new functions reject anon-bearer calls, so an old
+  APK against new functions will get 401s on `gemini-key`/`encode-opus`
+  (new APK against old functions works fine).
+- These changes reduce exposure for the pilot; they don't remove it — any
+  signed-in user can still extract the key. The relay server (`relay/`)
+  replaces client-side key distribution entirely and remains the production
+  requirement before school deployment.
+
 ## Out of scope (deliberately)
 
 - Supabase `encode-opus` stays for now — its RTT only touches the first chunk

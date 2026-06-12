@@ -187,7 +187,6 @@ const NewHomeContent = ({
       // Initialise AI services and bind the toyId for chat logging
       await VoiceProcessingService.initialize({
         toyId: toy.id,
-        geminiApiKey: voiceConfig.geminiApiKey,
         useGeminiLive: voiceConfig.useGeminiLive,
         esp32Ip:   esp32Ip,
         esp32Port: ESP32_PORT,

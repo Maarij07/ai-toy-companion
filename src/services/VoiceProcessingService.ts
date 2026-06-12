@@ -7,7 +7,7 @@ import ChatService from './ChatService';
 import GeminiLiveService from './GeminiLiveService';
 import { OpusStreamSender } from './OpusStreamSender';
 import Esp32DiscoveryService from './Esp32DiscoveryService';
-import { supabaseUrl, supabaseAnonKey } from '../config/supabase';
+import { supabase, supabaseUrl, supabaseAnonKey } from '../config/supabase';
 import { ESP32_FALLBACK_IPS, ESP32_NSD_SERVICE_TYPES } from '../config/voiceConfig';
 import LatencyTrace from '../utils/LatencyTrace';
 
@@ -15,7 +15,6 @@ interface VoiceProcessingConfig {
   whisperModelPath?: string;
   ttsLanguage?: string;
   toyId?: string;        // Current toy ID for chat logging
-  geminiApiKey?: string; // Set to enable Gemini Live prototype
   useGeminiLive?: boolean;
   esp32Ip?: string;      // ESP32 IP address (printed to Serial on boot)
   esp32Port?: number;    // TCP port — default 8765
@@ -182,9 +181,9 @@ class VoiceProcessingService {
     try {
       this.config = config;
 
-      if (config.useGeminiLive && config.geminiApiKey) {
+      if (config.useGeminiLive) {
         // ── Gemini Live mode: single WebSocket replaces STT + LLM + TTS ────
-        GeminiLiveService.initialize(config.geminiApiKey);
+        GeminiLiveService.initialize();
         this.isInitialized = true;
         console.log('VoiceProcessingService: AI services initialised (Gemini Live mode)');
         return true;
@@ -257,12 +256,18 @@ class VoiceProcessingService {
     const pcmB64 = this.bufferToBase64(pcmForEncode);
     console.log(`VPS|encode-opus request: pcm=${pcmForEncode.byteLength}B b64=${pcmB64.length} chars`);
 
+    const { data: { session } } = await supabase.auth.getSession();
+    const token = session?.access_token;
+    if (!token) {
+      throw new Error('Not authenticated — cannot encode response audio');
+    }
+
     const res = await this.fetchWithTimeout(`${supabaseUrl}/functions/v1/encode-opus`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'apikey': supabaseAnonKey,
-        'Authorization': `Bearer ${supabaseAnonKey}`,
+        'Authorization': `Bearer ${token}`,
       },
       body: JSON.stringify({ pcm: pcmB64 }),
     }, 45_000, 'encode-opus edge function');
