@@ -1,4 +1,4 @@
-import { supabase } from '../config/supabase';
+import { supabase, supabaseUrl, supabaseAnonKey } from '../config/supabase';
 
 interface TTSConfig {
   language?: string;
@@ -47,17 +47,13 @@ class TTSService {
         return { audioData: null, success: false, error: 'User not authenticated' };
       }
 
-      // Get Supabase config from supabase client (no local env)
-      const supabaseUrl = supabase.supabaseUrl;
-      const supabaseKey = supabase.supabaseKey;
-      
       // Call the Supabase Edge Function for TTS processing (Resemble)
       const response = await fetch(`${supabaseUrl}/functions/v1/tts-processing`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`,
-          'apikey': supabaseKey,
+          'apikey': supabaseAnonKey,
         },
         body: JSON.stringify({
           text: text,
@@ -142,15 +138,12 @@ class TTSService {
         return { url: '', success: false, error: 'User not authenticated' };
       }
 
-      const supabaseUrl = supabase.supabaseUrl;
-      const supabaseKey = supabase.supabaseKey;
-
       const response = await fetch(`${supabaseUrl}/functions/v1/tts-processing`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`,
-          'apikey': supabaseKey,
+          'apikey': supabaseAnonKey,
         },
         body: JSON.stringify({
           text,

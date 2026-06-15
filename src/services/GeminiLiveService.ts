@@ -17,13 +17,21 @@
  *
  * Note: relay/ is built and parked for production/school pilot phase.
  */
-import { supabaseUrl, supabaseAnonKey } from '../config/supabase';
+import { supabase, supabaseUrl, supabaseAnonKey } from '../config/supabase';
+import LatencyTrace from '../utils/LatencyTrace';
 
 const GEMINI_LIVE_WS_BASE =
   'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent';
 
 // How many PCM bytes per realtimeInput message (~125 ms of 16 kHz 16-bit audio)
 const STREAM_CHUNK_BYTES = 4000;
+
+// Push-to-talk turn boundaries: the button is the source of truth for when the
+// user is speaking, so Gemini's automatic VAD is disabled and the app sends
+// explicit activityStart/activityEnd signals. Required for live mic forwarding —
+// with auto VAD, a mid-sentence pause would trigger a premature response.
+// Set to false to fall back to auto VAD + audioStreamEnd (legacy behaviour).
+const EXPLICIT_ACTIVITY = true;
 
 // ── Debug log — circular buffer of last 40 entries, readable on-screen ────────
 const DEBUG_LOG: string[] = [];
@@ -35,7 +43,7 @@ const _origLog = console.log.bind(console);
 console.log = (...args: any[]) => {
   _origLog(...args);
   const msg = args.map(a => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ');
-  if (msg.startsWith('VPS|') || msg.startsWith('GeminiLive|')) {
+  if (msg.startsWith('VPS|') || msg.startsWith('GeminiLive|') || msg.startsWith('LAT|')) {
     const line = `[${new Date().toISOString().slice(11,23)}] ${msg}`;
     DEBUG_LOG.push(line);
     if (DEBUG_LOG.length > 60) DEBUG_LOG.shift();
@@ -90,13 +98,18 @@ class GeminiLiveService {
   private async fetchApiKey(): Promise<string> {
     if (this.cachedApiKey) return this.cachedApiKey;
 
+    const { data: { session } } = await supabase.auth.getSession();
+    const token = session?.access_token;
+    if (!token) {
+      throw new Error('Not authenticated — cannot fetch Gemini Live key');
+    }
 
     const res = await fetch(`${supabaseUrl}/functions/v1/gemini-key`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'apikey': supabaseAnonKey,
-        'Authorization': `Bearer ${supabaseAnonKey}`,
+        'Authorization': `Bearer ${token}`,
       },
     });
     if (!res.ok) {
@@ -168,6 +181,11 @@ class GeminiLiveService {
             },
           },
         };
+        if (EXPLICIT_ACTIVITY) {
+          setupMsg.setup.realtimeInputConfig = {
+            automaticActivityDetection: { disabled: true },
+          };
+        }
         if (systemPrompt) {
           setupMsg.setup.systemInstruction = {
             parts: [{ text: systemPrompt }],
@@ -177,7 +195,7 @@ class GeminiLiveService {
         dbg('connect: setup msg sent');
       };
 
-      ws.onmessage = (event: MessageEvent) => {
+      ws.onmessage = (event) => {
 
         const decodeAndHandle = (raw: string) => {
           const tryHandle = (parsed: any) => {
@@ -232,7 +250,7 @@ class GeminiLiveService {
         this.ws = null;
       };
 
-      ws.onclose = (event: CloseEvent) => {
+      ws.onclose = (event) => {
         console.log(`GeminiLiveService: closed (code=${event.code} reason=${event.reason})`);
         this.ready = false;
         // If closed before setupComplete arrived, reject connect() immediately
@@ -270,6 +288,7 @@ class GeminiLiveService {
     if (msg.serverContent?.modelTurn?.parts) {
       for (const part of msg.serverContent.modelTurn.parts) {
         if (part.inlineData?.data) {
+          LatencyTrace.mark('gemini_first_audio');
           const buf = this.base64ToBuffer(part.inlineData.data);
           if (this.turnChunkCallback) {
             // Streaming mode: deliver each chunk immediately as Gemini generates it
@@ -291,6 +310,7 @@ class GeminiLiveService {
     }
 
     if (msg.serverContent?.turnComplete === true) {
+      LatencyTrace.mark('gemini_turn_complete');
       if (this.turnTimer) { clearTimeout(this.turnTimer); this.turnTimer = null; }
       const text = this.responseTextParts.join(' ').trim();
       // In streaming mode pcm is empty (delivered via onChunk); in batch mode assemble now
@@ -312,6 +332,21 @@ class GeminiLiveService {
   // ── Audio streaming ─────────────────────────────────────────────────────────
 
   /**
+   * Mark the start of the user's speech (button pressed). With explicit
+   * activity signaling, Gemini buffers everything streamed via streamPcm()
+   * until endUserTurn() sends activityEnd. No-op in legacy auto-VAD mode.
+   */
+  beginUserActivity(): void {
+    if (!EXPLICIT_ACTIVITY) return;
+    if (!this.ws || !this.ready) {
+      dbg('beginUserActivity: NOT CONNECTED — skipping');
+      return;
+    }
+    this.ws.send(JSON.stringify({ realtimeInput: { activityStart: {} } }));
+    dbg('beginUserActivity: activityStart sent');
+  }
+
+  /**
    * Stream raw 16-bit 16 kHz mono PCM to Gemini Live.
    * The entire PCM buffer is sliced into ~125 ms chunks and sent as
    * realtimeInput messages. Safe to call multiple times before endUserTurn().
@@ -321,8 +356,9 @@ class GeminiLiveService {
       dbg('streamPcm: NOT CONNECTED — skipping');
       return;
     }
-    // Calculate RMS to confirm real audio (not silence)
-    const samples = new Int16Array(pcm);
+    // Calculate RMS to confirm real audio (not silence).
+    // Guard the Int16 view against odd-length buffers (half a sample).
+    const samples = new Int16Array(pcm, 0, (pcm.byteLength & ~1) / 2);
     let sumSq = 0;
     for (let i = 0; i < samples.length; i++) sumSq += samples[i] * samples[i];
     const rms = Math.sqrt(sumSq / (samples.length || 1));
@@ -362,6 +398,13 @@ class GeminiLiveService {
       return Promise.reject(new Error('Gemini Live not connected'));
     }
 
+    // Legacy auto-VAD mode can start the response before endUserTurn is
+    // called — hand any already-buffered chunks to the streaming callback
+    // instead of discarding them at turnComplete.
+    if (onChunk && this.responseChunks.length > 0) {
+      dbg(`endUserTurn: delivering ${this.responseChunks.length} pre-buffered chunks to callback`);
+      for (const chunk of this.responseChunks) onChunk(chunk);
+    }
     this.responseChunks      = [];
     this.responseTextParts   = [];
     this.turnChunkCallback   = onChunk ?? null;
@@ -382,11 +425,19 @@ class GeminiLiveService {
         reject(new Error('Gemini Live response timeout after ' + timeoutMs + ' ms'));
       }, timeoutMs);
 
-      // Signal end of audio stream — triggers model generation
-      dbg('endUserTurn: sending audioStreamEnd');
-      this.ws!.send(JSON.stringify({
-        realtimeInput: { audioStreamEnd: true },
-      }));
+      // Signal end of the user's speech — triggers model generation
+      if (EXPLICIT_ACTIVITY) {
+        dbg('endUserTurn: sending activityEnd');
+        this.ws!.send(JSON.stringify({
+          realtimeInput: { activityEnd: {} },
+        }));
+      } else {
+        dbg('endUserTurn: sending audioStreamEnd');
+        this.ws!.send(JSON.stringify({
+          realtimeInput: { audioStreamEnd: true },
+        }));
+      }
+      LatencyTrace.mark('activity_end_sent');
       dbg('endUserTurn: waiting for turnComplete...');
     });
   }

@@ -1,10 +1,4 @@
 /**
- * Gemini Live prototype — set your Gemini API key here.
- * Get a key at: https://aistudio.google.com/app/apikey
- */
-const GEMINI_LIVE_API_KEY = 'AIzaSyCueYKY9LYW94B7pn-I9UTjENZkBZcG8e8';
-
-/**
  * Set to true  → use Gemini Live (single WebSocket, replaces STT+LLM+TTS)
  * Set to false → use the original STT → LLM → TTS Supabase edge function pipeline
  */
@@ -26,7 +20,6 @@ export const ESP32_FALLBACK_IPS = ['192.168.1.44']; // fallback when Android can
 const voiceConfig = {
   whisperModelPath: process.env.WHISPER_MODEL_PATH || undefined,
   ttsLanguage: process.env.TTS_LANGUAGE || 'en-US',
-  geminiApiKey: GEMINI_LIVE_API_KEY,
   useGeminiLive: USE_GEMINI_LIVE,
   esp32Ip:   ESP32_IP,
   esp32Port: ESP32_PORT,

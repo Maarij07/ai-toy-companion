@@ -110,9 +110,6 @@ class VoiceProcessingIntegrationTest {
       console.log('📋 Test 2: Service Initialization');
 
       const initialized = await VoiceProcessingService.initialize({
-        esp32ServiceUUID: 'test-uuid',
-        audioRxCharacteristicUUID: 'test-rx-uuid',
-        audioTxCharacteristicUUID: 'test-tx-uuid',
         ttsLanguage: 'en-US',
       });
 

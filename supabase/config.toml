@@ -3,7 +3,7 @@
 
 # Voice Processing Functions
 [functions.encode-opus]
-verify_jwt = false
+verify_jwt = true
 
 [functions.stt-processing]
 verify_jwt = true

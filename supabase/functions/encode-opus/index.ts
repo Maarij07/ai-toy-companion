@@ -8,11 +8,47 @@
  * Output: { opus: string } - base64-encoded length-prefixed Opus packet stream
  */
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
+
+/**
+ * Require a signed-in user. The platform's verify_jwt gate is not enough:
+ * the public anon key is itself a valid JWT and passes signature checks.
+ * getUser() resolves the token to an actual auth user, which the anon key
+ * (and any other non-user JWT) cannot do.
+ */
+// This function is called once per audio chunk on the latency path, so
+// validated tokens are cached for 60s across warm invocations — the
+// getUser() network hop is paid once per minute, not once per chunk.
+const validatedTokens = new Map<string, number>();
+const TOKEN_CACHE_MS = 60_000;
+
+async function requireUser(req: Request): Promise<Response | null> {
+  const token = (req.headers.get("Authorization") ?? "").replace(/^Bearer\s+/i, "");
+
+  const cachedAt = validatedTokens.get(token);
+  if (cachedAt && Date.now() - cachedAt < TOKEN_CACHE_MS) return null;
+
+  const supabase = createClient(
+    Deno.env.get("SUPABASE_URL")!,
+    Deno.env.get("SUPABASE_ANON_KEY")!,
+  );
+  const { data: { user }, error } = await supabase.auth.getUser(token);
+  if (error || !user) {
+    return new Response(
+      JSON.stringify({ error: "Unauthorized — sign in required" }),
+      { status: 401, headers: { ...CORS_HEADERS, "Content-Type": "application/json" } },
+    );
+  }
+
+  validatedTokens.set(token, Date.now());
+  if (validatedTokens.size > 1000) validatedTokens.clear(); // bound memory
+  return null;
+}
 
 const SAMPLE_RATE = 16000;
 const FRAME_SIZE = 320; // 20ms at 16kHz
@@ -61,6 +97,9 @@ serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: CORS_HEADERS });
   }
+
+  const unauthorized = await requireUser(req);
+  if (unauthorized) return unauthorized;
 
   let pcmB64: string;
   try {

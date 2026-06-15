@@ -122,11 +122,12 @@ const SignupScreen: React.FC<SignupScreenProps> = ({
         const { data, error } = await AuthService.signUp(email, password, name);
         
         if (error) {
+          const signupError = error as { message?: string; status?: string | number; details?: string };
           console.error('Signup error in SignupScreen:', error);
-          console.error('Error message:', error.message);
-          console.error('Error status:', error.status);
-          console.error('Error details:', error.details);
-          Alert.alert('Sign Up Failed', error.message || 'Failed to create account. Please try again.');
+          console.error('Error message:', signupError.message);
+          console.error('Error status:', signupError.status);
+          console.error('Error details:', signupError.details);
+          Alert.alert('Sign Up Failed', signupError.message || 'Failed to create account. Please try again.');
           return;
         }
         

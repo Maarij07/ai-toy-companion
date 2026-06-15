@@ -61,12 +61,25 @@ interface AutoReceiveBuffer {
   chunks: ArrayBuffer[];
 }
 
+/**
+ * Live audio handler — receives the mic stream chunk-by-chunk as the user
+ * speaks (STREAM_START → PCM chunks → STREAM_END), instead of one assembled
+ * buffer at the end. Lets the pipeline forward speech to Gemini in real time.
+ * Chunks include the 44-byte WAV header the firmware sends at stream start.
+ */
+export interface LiveAudioHandler {
+  onStart: (filename: string) => void;
+  onChunk: (data: ArrayBuffer) => void;
+  onEnd:   (filename: string, dataBytes: number) => void;
+}
+
 class ESP32WiFiService {
   private isSubscribed = false;
   private pendingReceive:      PendingReceive | null = null;
   private multiReceive:        MultiReceive   | null = null;
   private autoReceiveHandler:  ((filename: string, data: ArrayBuffer) => void) | null = null;
   private autoReceiveBuffer:   AutoReceiveBuffer | null = null;
+  private liveAudioHandler:    LiveAudioHandler | null = null;
   private streamBuffer:        { filename: string; chunks: ArrayBuffer[] } | null = null;
   private pendingSendTimeout:  ReturnType<typeof setTimeout> | null = null;
   private onDisconnectHandler: (() => void) | null = null;
@@ -367,16 +380,30 @@ class ESP32WiFiService {
     // Two protocols:
     //   Live stream (Gemini Live path):
     //     STREAM_START:name → [WAV header + PCM chunks] → STREAM_END:name:bytes
+    //     With a LiveAudioHandler set, chunks are forwarded as they arrive;
+    //     otherwise they are buffered and delivered assembled at STREAM_END.
     //   Store-and-forward:
     //     NEW:name:size → app sends SEND:name → FILE:name:size → [binary] → END:name
-    if (this.autoReceiveHandler) {
+    if (this.autoReceiveHandler || this.liveAudioHandler) {
       switch (msg.type) {
         case 'STREAM_START':
+          // streamBuffer doubles as the "stream in progress" marker that
+          // routes binary parsing — keep it set even in live mode.
           this.streamBuffer = { filename: msg.filename, chunks: [] };
           console.log(`ESP32WiFi: live stream start — ${msg.filename}`);
+          this.liveAudioHandler?.onStart(msg.filename);
           break;
         case 'STREAM_END':
           if (this.streamBuffer) {
+            if (this.liveAudioHandler) {
+              console.log(
+                `ESP32WiFi: stream complete — ${this.streamBuffer.filename} ` +
+                `| ${msg.dataBytes}B forwarded live`
+              );
+              this.streamBuffer = null;
+              this.liveAudioHandler.onEnd(msg.filename, msg.dataBytes);
+              break;
+            }
             const data = this.assembleChunks(this.streamBuffer.chunks);
             const pcmBytes = data.byteLength > 44 ? data.byteLength - 44 : data.byteLength;
             const durationMs = Math.round((pcmBytes / 2 / 16000) * 1000);
@@ -384,7 +411,7 @@ class ESP32WiFiService {
               `ESP32WiFi: stream complete — ${this.streamBuffer.filename} ` +
               `| total=${data.byteLength}B pcm=${pcmBytes}B ~${durationMs}ms`
             );
-            this.autoReceiveHandler(this.streamBuffer.filename, data);
+            this.autoReceiveHandler?.(this.streamBuffer.filename, data);
             this.streamBuffer = null;
           }
           break;
@@ -405,13 +432,17 @@ class ESP32WiFiService {
           if (this.autoReceiveBuffer) {
             const data = this.assembleChunks(this.autoReceiveBuffer.chunks);
             console.log(`ESP32WiFi: recording received — ${this.autoReceiveBuffer.filename} (${data.byteLength}B)`);
-            this.autoReceiveHandler(this.autoReceiveBuffer.filename, data);
+            this.autoReceiveHandler?.(this.autoReceiveBuffer.filename, data);
             this.autoReceiveBuffer = null;
           }
           break;
         case 'BINARY':
-          if (this.streamBuffer)       this.streamBuffer.chunks.push(msg.data);
-          else if (this.autoReceiveBuffer) this.autoReceiveBuffer.chunks.push(msg.data);
+          if (this.streamBuffer) {
+            if (this.liveAudioHandler) this.liveAudioHandler.onChunk(msg.data);
+            else this.streamBuffer.chunks.push(msg.data);
+          } else if (this.autoReceiveBuffer) {
+            this.autoReceiveBuffer.chunks.push(msg.data);
+          }
           break;
         case 'ERROR':
           console.error('ESP32WiFi: autonomous push error:', msg.message);
@@ -443,6 +474,14 @@ class ESP32WiFiService {
   setAutoReceiveHandler(handler: (filename: string, data: ArrayBuffer) => void): void {
     this.autoReceiveHandler = handler;
     this.autoReceiveBuffer  = null;
+  }
+
+  /**
+   * Receive the live mic stream chunk-by-chunk instead of assembled at
+   * STREAM_END. Pass null to revert to the buffered autoReceive path.
+   */
+  setLiveAudioHandler(handler: LiveAudioHandler | null): void {
+    this.liveAudioHandler = handler;
   }
 
   setDisconnectHandler(handler: () => void): void {
@@ -490,14 +529,24 @@ class ESP32WiFiService {
   }
 
   /**
-   * Send DONE:filename after a 150ms gap to terminate a streamed Opus send.
-   * The gap prevents TCP coalescing from merging the last Opus bytes with DONE,
-   * which would cause the firmware to miss the DONE marker and hang in STREAMING mode.
+   * Terminate a streamed Opus send.
+   *
+   * Sends a zero-length packet (0x00 0x00) inside the existing
+   * [len][opus] framing — new firmware treats it as the end-of-stream
+   * sentinel immediately, with no coalescing ambiguity and no delay.
+   *
+   * The legacy DONE:filename text command follows after a 150ms gap for
+   * firmware that predates the sentinel (the gap prevents TCP coalescing
+   * from merging DONE with the last Opus bytes, which old firmware's
+   * byte-sniffing detection would miss). New firmware ignores the
+   * trailing DONE: line. Remove once all devices run sentinel firmware.
    */
   async sendStreamDone(filename: string): Promise<void> {
+    this.writeBinaryChunk(new Uint8Array([0x00, 0x00]));
+    console.log('ESP32WiFi: end-of-stream sentinel sent');
     await new Promise(r => setTimeout(r, 150));
     await this.writeCommand(`DONE:${filename}`);
-    console.log(`ESP32WiFi: DONE:${filename} sent`);
+    console.log(`ESP32WiFi: DONE:${filename} sent (legacy compat)`);
   }
 
   async requestFile(filename: string, timeoutMs = 30_000): Promise<ArrayBuffer> {

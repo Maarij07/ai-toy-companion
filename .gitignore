@@ -73,3 +73,6 @@ yarn-error.log
 !.yarn/releases
 !.yarn/sdks
 !.yarn/versions
+
+# Local agent handoff notes
+work/agent-output/claude-review-context-ai-toy-latency.md
