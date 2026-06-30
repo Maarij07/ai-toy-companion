@@ -7,7 +7,12 @@
       "PowerShell(python --version)",
       "PowerShell(Start-Process \"d:\\\\temp\\\\development\\\\react-native-cli\\\\AI_Toy_WIFI\\\\AI_Toy_Client_Report_June2026.pdf\")",
       "Bash(python generate_report.py)",
-      "Bash(python -c ' *)"
+      "Bash(python -c ' *)",
+      "Bash(npx jest *)",
+      "Bash(echo \"EXIT_CODE=$?\")",
+      "Bash(java -version)",
+      "Bash(npx supabase *)",
+      "Bash(curl -s -w '\\\\nHTTP_STATUS:%{http_code}\\\\n' -X POST https://etsnyensdpagqfbuxdpe.supabase.co/functions/v1/gemini-key -H 'Content-Type: application/json' -H 'apikey: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImV0c255ZW5zZHBhZ3FmYnV4ZHBlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzAzOTM0MTQsImV4cCI6MjA4NTk2OTQxNH0.Z_iK2v6BVqB4tRHNWnIV3kaYjxM4y5UFQis68ad3btw' -H 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImV0c255ZW5zZHBhZ3FmYnV4ZHBlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzAzOTM0MTQsImV4cCI6MjA4NTk2OTQxNH0.Z_iK2v6BVqB4tRHNWnIV3kaYjxM4y5UFQis68ad3btw')"
     ]
   }
 }

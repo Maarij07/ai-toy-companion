@@ -8,18 +8,20 @@ export interface Esp32NsdService {
 }
 
 const DEFAULT_SERVICE_TYPES = ['_tcp._tcp.', '_esp32audio._tcp.'];
+const DEFAULT_TCP_PORT = 8765;
 
 const Esp32Nsd = NativeModules.Esp32Nsd as
   | {
       discoverUdp?: (port: number, timeoutMs: number) => Promise<Esp32NsdService>;
-      discover: (serviceType: string, timeoutMs: number) => Promise<Esp32NsdService>;
+      discover: (serviceType: string, expectedPort: number, timeoutMs: number) => Promise<Esp32NsdService>;
     }
   | undefined;
 
 class Esp32DiscoveryService {
   async discoverHost(
     serviceTypes = DEFAULT_SERVICE_TYPES,
-    timeoutMs = 3500
+    timeoutMs = 3500,
+    expectedPort = DEFAULT_TCP_PORT
   ): Promise<Esp32NsdService | null> {
     if (Platform.OS !== 'android' || !Esp32Nsd?.discover) {
       return null;
@@ -36,7 +38,7 @@ class Esp32DiscoveryService {
 
     for (const serviceType of serviceTypes) {
       try {
-        const result = await Esp32Nsd.discover(serviceType, timeoutMs);
+        const result = await Esp32Nsd.discover(serviceType, expectedPort, timeoutMs);
         if (result?.host && result?.port) {
           console.log(
             `ESP32 discovery: found ${result.name} at ${result.host}:${result.port} (${result.type})`

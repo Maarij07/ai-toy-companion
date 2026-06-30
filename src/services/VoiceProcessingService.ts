@@ -10,6 +10,9 @@ import Esp32DiscoveryService from './Esp32DiscoveryService';
 import { supabase, supabaseUrl, supabaseAnonKey } from '../config/supabase';
 import { ESP32_FALLBACK_IPS, ESP32_NSD_SERVICE_TYPES } from '../config/voiceConfig';
 import LatencyTrace from '../utils/LatencyTrace';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+const STORAGE_KEY_LAST_HOST = 'esp32_last_host';
 
 interface VoiceProcessingConfig {
   whisperModelPath?: string;
@@ -788,11 +791,11 @@ class VoiceProcessingService {
 
   // ── WiFi connection helpers ───────────────────────────────────────────────
 
-  private getEsp32HostCandidates(host?: string, discoveredHost?: string): string[] {
+  private getEsp32HostCandidates(host?: string, discoveredHost?: string, persistedHost?: string): string[] {
     const primary = host || this.config?.esp32Ip || '';
     const fallbackHosts = this.config?.esp32FallbackIps || ESP32_FALLBACK_IPS;
 
-    return [primary, discoveredHost || '', ...fallbackHosts]
+    return [primary, discoveredHost || '', persistedHost || '', ...fallbackHosts]
       .map(candidate => candidate.trim())
       .filter((candidate, index, candidates) => Boolean(candidate) && candidates.indexOf(candidate) === index);
   }
@@ -805,23 +808,31 @@ class VoiceProcessingService {
 
     const requestedHost = ip?.trim();
     const shouldDiscover = !requestedHost || requestedHost.endsWith('.local');
-    const discovered = shouldDiscover
-      ? await Esp32DiscoveryService.discoverHost(
-          this.config?.esp32NsdServiceTypes || ESP32_NSD_SERVICE_TYPES
-        )
-      : null;
-    const hosts = this.getEsp32HostCandidates(ip, discovered?.host);
+    const configuredPort = this.config?.esp32Port ?? 8765;
+
+    const [discovered, persistedHost] = await Promise.all([
+      shouldDiscover
+        ? Esp32DiscoveryService.discoverHost(
+            this.config?.esp32NsdServiceTypes || ESP32_NSD_SERVICE_TYPES,
+            3500,
+            configuredPort
+          )
+        : Promise.resolve(null),
+      AsyncStorage.getItem(STORAGE_KEY_LAST_HOST).catch(() => null),
+    ]);
+
+    const hosts = this.getEsp32HostCandidates(ip, discovered?.host, persistedHost ?? undefined);
     if (hosts.length === 0) {
       console.error('VoiceProcessingService: no ESP32 IP — set esp32Ip in voiceConfig or pass to connectToESP32()');
       return false;
     }
 
-    const configuredPort = this.config?.esp32Port ?? 8765;
     for (const host of hosts) {
       const port = discovered?.host === host && discovered.port ? discovered.port : configuredPort;
       console.log(`VoiceProcessingService: connecting to ESP32 at ${host}:${port}`);
       const connected = await ESP32WiFiService.connect(host, port);
       if (connected) {
+        AsyncStorage.setItem(STORAGE_KEY_LAST_HOST, host).catch(() => {});
         return true;
       }
       console.warn(`VoiceProcessingService: failed to connect to ${host}:${port}`);

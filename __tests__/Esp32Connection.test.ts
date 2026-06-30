@@ -149,7 +149,7 @@ describe('Esp32DiscoveryService', () => {
     const Esp32DiscoveryService = require('../src/services/Esp32DiscoveryService').default;
 
     await expect(Esp32DiscoveryService.discoverHost()).resolves.toEqual(resolved);
-    expect(discover).toHaveBeenCalledWith('_tcp._tcp.', 3500);
+    expect(discover).toHaveBeenCalledWith('_tcp._tcp.', 8765, 3500);
   });
 
   it('requests fine location for NSD on Android 12 and older runtime-permission devices', async () => {

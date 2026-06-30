@@ -15,7 +15,7 @@ export const ESP32_PORT = 8765;           // matches TCP_PORT in firmware
 // Firmware v2 advertises MDNS.addService("tcp", "tcp", ESP32_PORT),
 // which maps to DNS-SD service type "_tcp._tcp.".
 export const ESP32_NSD_SERVICE_TYPES = ['_tcp._tcp.', '_esp32audio._tcp.'];
-export const ESP32_FALLBACK_IPS = ['192.168.1.44']; // fallback when Android cannot resolve mDNS
+export const ESP32_FALLBACK_IPS = ['192.168.1.34']; // fallback when Android cannot resolve mDNS
 
 const voiceConfig = {
   whisperModelPath: process.env.WHISPER_MODEL_PATH || undefined,

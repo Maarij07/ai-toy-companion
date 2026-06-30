@@ -59,6 +59,16 @@ console.warn = (...args: any[]) => {
     if (DEBUG_LOG.length > 60) DEBUG_LOG.shift();
   }
 };
+const _origError = console.error.bind(console);
+console.error = (...args: any[]) => {
+  _origError(...args);
+  const msg = args.map(a => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ');
+  if (msg.startsWith('VPS|') || msg.startsWith('GeminiLive|')) {
+    const line = `[${new Date().toISOString().slice(11,23)}] ❌ ${msg}`;
+    DEBUG_LOG.push(line);
+    if (DEBUG_LOG.length > 60) DEBUG_LOG.shift();
+  }
+};
 
 function dbg(msg: string) {
   console.log('GeminiLive|' + msg);

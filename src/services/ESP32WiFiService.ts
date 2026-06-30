@@ -83,6 +83,7 @@ class ESP32WiFiService {
   private streamBuffer:        { filename: string; chunks: ArrayBuffer[] } | null = null;
   private pendingSendTimeout:  ReturnType<typeof setTimeout> | null = null;
   private onDisconnectHandler: (() => void) | null = null;
+  private pendingPlaybackAck:  { filename: string; resolve: () => void; reject: (err: Error) => void } | null = null;
 
   // Text line accumulator — handles partial TCP reads of \n-terminated commands
   private lineBuffer = '';
@@ -327,6 +328,20 @@ class ESP32WiFiService {
   // ── Internal state machine (file receive, same as BLE version) ─────────────────
 
   private handleInternally(msg: ESP32WiFiMessage): void {
+    // ── Playback acknowledgment — resolves sendFileToESP32/sendStreamDone ───────
+    // Firmware sends PLAYED:<filename> only after it actually finishes playing
+    // the audio (or ERROR: if decode/playback failed), independent of whatever
+    // other receive state is active.
+    if (this.pendingPlaybackAck) {
+      if (msg.type === 'PLAYED' && msg.filename === this.pendingPlaybackAck.filename) {
+        this.pendingPlaybackAck.resolve();
+        this.pendingPlaybackAck = null;
+      } else if (msg.type === 'ERROR') {
+        this.pendingPlaybackAck.reject(new Error(msg.message));
+        this.pendingPlaybackAck = null;
+      }
+    }
+
     // ── Single file request ─────────────────────────────────────────────────────
     if (this.pendingReceive) {
       switch (msg.type) {
@@ -516,6 +531,26 @@ class ESP32WiFiService {
     WiFiTCPService.sendBinary(chunk);
   }
 
+  /**
+   * Resolves once the ESP32 confirms it finished playing `filename`
+   * (PLAYED:<filename>), or rejects on ERROR / disconnect / timeout.
+   * Without this, callers would report success the instant bytes left
+   * the phone, even if the toy never actually played them.
+   */
+  private waitForPlayedAck(filename: string, timeoutMs = 20_000): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        if (this.pendingPlaybackAck?.filename === filename) this.pendingPlaybackAck = null;
+        reject(new Error(`No PLAYED acknowledgment for ${filename} within ${timeoutMs}ms`));
+      }, timeoutMs);
+      this.pendingPlaybackAck = {
+        filename,
+        resolve: () => { clearTimeout(timer); resolve(); },
+        reject:  (err) => { clearTimeout(timer); reject(err); },
+      };
+    });
+  }
+
   async listFiles():   Promise<void> { await this.writeCommand('LIST'); }
   async getStatus():   Promise<void> { await this.writeCommand('STATUS'); }
   async formatFlash(): Promise<void> { await this.writeCommand('FORMAT'); }
@@ -544,9 +579,12 @@ class ESP32WiFiService {
   async sendStreamDone(filename: string): Promise<void> {
     this.writeBinaryChunk(new Uint8Array([0x00, 0x00]));
     console.log('ESP32WiFi: end-of-stream sentinel sent');
+    const ack = this.waitForPlayedAck(filename);
     await new Promise(r => setTimeout(r, 150));
     await this.writeCommand(`DONE:${filename}`);
-    console.log(`ESP32WiFi: DONE:${filename} sent (legacy compat)`);
+    console.log(`ESP32WiFi: DONE:${filename} sent (legacy compat) — awaiting PLAYED ack`);
+    await ack;
+    console.log(`ESP32WiFi: PLAYED:${filename} acknowledged`);
   }
 
   async requestFile(filename: string, timeoutMs = 30_000): Promise<ArrayBuffer> {
@@ -623,9 +661,12 @@ class ESP32WiFiService {
     // Without this, DONE may arrive in the same TCP read as the last Opus chunk
     // and be swallowed by the firmware's handleTcpIncoming(), leaving the ESP32
     // stuck in STREAMING mode.
+    const ack = this.waitForPlayedAck(filename);
     await new Promise(r => setTimeout(r, 150));
     await this.writeCommand(`DONE:${filename}`);
-    console.log(`ESP32WiFi: DONE:${filename} sent`);
+    console.log(`ESP32WiFi: DONE:${filename} sent — awaiting PLAYED ack`);
+    await ack;
+    console.log(`ESP32WiFi: PLAYED:${filename} acknowledged`);
   }
 
   // ── Connection management ─────────────────────────────────────────────────────
@@ -670,6 +711,10 @@ class ESP32WiFiService {
     this.multiReceive      = null;
     this.autoReceiveBuffer = null;
     this.streamBuffer      = null;
+    if (this.pendingPlaybackAck) {
+      this.pendingPlaybackAck.reject(new Error('ESP32 disconnected while awaiting PLAYED acknowledgment'));
+      this.pendingPlaybackAck = null;
+    }
   }
 
   isConnected(): boolean {

@@ -77,8 +77,9 @@ class Esp32NsdModule(
   }
 
   @ReactMethod
-  fun discover(serviceType: String?, timeoutMs: Double, promise: Promise) {
+  fun discover(serviceType: String?, expectedPort: Double, timeoutMs: Double, promise: Promise) {
     val requestedType = normalizeServiceType(serviceType)
+    val requestedPort = expectedPort.toInt().coerceIn(1, 65535)
     val settled = AtomicBoolean(false)
     val resolving = AtomicBoolean(false)
     var listener: NsdManager.DiscoveryListener? = null
@@ -158,7 +159,10 @@ class Esp32NsdModule(
 
             override fun onServiceResolved(serviceInfo: NsdServiceInfo) {
               resolving.set(false)
-              if (serviceInfo.port <= 0) return
+              // Reject services that resolve to a different port — on a network
+              // with other devices advertising the same generic "_tcp._tcp."
+              // type, this is the only signal that distinguishes our ESP32.
+              if (serviceInfo.port != requestedPort) return
               finishWithService(serviceInfo)
             }
           })
