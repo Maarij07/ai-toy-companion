@@ -26,6 +26,20 @@ const GEMINI_LIVE_WS_BASE =
 // How many PCM bytes per realtimeInput message (~125 ms of 16 kHz 16-bit audio)
 const STREAM_CHUNK_BYTES = 4000;
 
+// Human-readable gloss for WS close codes seen from the Live API, so a bad
+// model name / quota / auth failure is diagnosable from the on-device log
+// alone instead of requiring a repro + packet capture.
+function describeCloseCode(code: number | undefined, reason: string | undefined): string {
+  if (reason) return reason;
+  switch (code) {
+    case 1000: return 'normal close';
+    case 1006: return 'abnormal close (no close frame — network drop or server crash)';
+    case 1008: return 'policy violation (commonly: unknown/retired model name, or key lacks access to this model)';
+    case 1011: return 'internal server error';
+    default: return 'unknown close code';
+  }
+}
+
 // Push-to-talk turn boundaries: the button is the source of truth for when the
 // user is speaking, so Gemini's automatic VAD is disabled and the app sends
 // explicit activityStart/activityEnd signals. Required for live mic forwarding —
@@ -185,7 +199,7 @@ class GeminiLiveService {
         dbg('connect: WS open — sending setup msg');
         const setupMsg: any = {
           setup: {
-            model: 'models/gemini-2.0-flash-live-001',
+            model: 'models/gemini-3.1-flash-live-preview',
             generationConfig: {
               responseModalities: ['AUDIO'],
             },
@@ -261,18 +275,19 @@ class GeminiLiveService {
       };
 
       ws.onclose = (event) => {
-        console.log(`GeminiLiveService: closed (code=${event.code} reason=${event.reason})`);
+        const detail = describeCloseCode(event.code, event.reason);
+        console.log(`GeminiLiveService: closed (code=${event.code} reason=${event.reason || 'none'}) — ${detail}`);
         this.ready = false;
         // If closed before setupComplete arrived, reject connect() immediately
         // instead of hanging until the 15-second timeout.
         if (this.setupReject) {
-          const err = new Error(`Gemini Live WS closed during setup (code=${event.code})`);
+          const err = new Error(`Gemini Live WS closed during setup (code=${event.code}) — ${detail}`);
           this.setupReject(err);
           this.setupReject  = null;
           this.setupResolve = null;
         }
         if (this.turnReject) {
-          this.turnReject(new Error(`Gemini Live closed mid-turn (code=${event.code} reason=${event.reason || 'none'})`));
+          this.turnReject(new Error(`Gemini Live closed mid-turn (code=${event.code} reason=${event.reason || 'none'}) — ${detail}`));
           this.turnReject  = null;
           this.turnResolve = null;
         }
